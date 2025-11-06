@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Inktrad Market Feed Test</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+        
+        .status {
+            display: inline-block;
+            padding: 8px 20px;
+            border-radius: 20px;
+            font-weight: bold;
+            margin-top: 10px;
+        }
+        
+        .status.connected {
+            background: #10b981;
+        }
+        
+        .status.disconnected {
+            background: #ef4444;
+        }
+        
+        .controls {
+            padding: 30px;
+            background: #f9fafb;
+            border-bottom: 1px solid #e5e7eb;
+        }
+        
+        .control-group {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        
+        button {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+        
+        .btn-connect {
+            background: #10b981;
+            color: white;
+        }
+        
+        .btn-disconnect {
+            background: #ef4444;
+            color: white;
+        }
+        
+        .btn-subscribe {
+            background: #3b82f6;
+            color: white;
+        }
+        
+        input {
+            padding: 12px;
+            border: 2px solid #e5e7eb;
+            border-radius: 8px;
+            font-size: 16px;
+            flex: 1;
+            min-width: 200px;
+        }
+        
+        input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        .feed-container {
+            padding: 30px;
+            max-height: 600px;
+            overflow-y: auto;
+        }
+        
+        .feed-item {
+            background: #f9fafb;
+            border-left: 4px solid #667eea;
+            padding: 15px;
+            margin-bottom: 15px;
+            border-radius: 8px;
+            animation: slideIn 0.3s ease-out;
+        }
+        
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateX(-20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+        
+        .feed-item .time {
+            color: #6b7280;
+            font-size: 0.9em;
+            margin-bottom: 5px;
+        }
+        
+        .feed-item .type {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 0.85em;
+            font-weight: 600;
+            margin-bottom: 10px;
+        }
+        
+        .type.connection { background: #dbeafe; color: #1e40af; }
+        .type.subscription { background: #d1fae5; color: #065f46; }
+        .type.tick { background: #fef3c7; color: #92400e; }
+        .type.error { background: #fee2e2; color: #991b1b; }
+        
+        .feed-item pre {
+            background: white;
+            padding: 10px;
+            border-radius: 6px;
+            overflow-x: auto;
+            font-size: 0.9em;
+        }
+        
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            padding: 30px;
+            background: #f9fafb;
+            border-top: 1px solid #e5e7eb;
+        }
+        
+        .stat-card {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        
+        .stat-card .value {
+            font-size: 2em;
+            font-weight: bold;
+            color: #667eea;
+            margin-bottom: 5px;
+        }
+        
+        .stat-card .label {
+            color: #6b7280;
+            font-size: 0.9em;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📈 Inktrad Market Feed</h1>
+            <p>Real-time WebSocket Connection Test</p>
+            <div class="status disconnected" id="status">● Disconnected</div>
+        </div>
+        
+        <div class="controls">
+            <div class="control-group">
+                <button class="btn-connect" onclick="connect()">Connect</button>
+                <button class="btn-disconnect" onclick="disconnect()">Disconnect</button>
+                <input type="text" id="instruments" placeholder="Enter security IDs (e.g., 1333, 26000)" value="1333, 26000">
+                <button class="btn-subscribe" onclick="subscribe()">Subscribe</button>
+                <button class="btn-subscribe" onclick="clearFeed()">Clear Feed</button>
+            </div>
+        </div>
+        
+        <div class="stats">
+            <div class="stat-card">
+                <div class="value" id="messageCount">0</div>
+                <div class="label">Messages Received</div>
+            </div>
+            <div class="stat-card">
+                <div class="value" id="tickCount">0</div>
+                <div class="label">Market Ticks</div>
+            </div>
+            <div class="stat-card">
+                <div class="value" id="subscribedCount">0</div>
+                <div class="label">Subscribed Instruments</div>
+            </div>
+        </div>
+        
+        <div class="feed-container" id="feed">
+            <div class="feed-item">
+                <div class="time">Ready to connect</div>
+                <div class="type connection">INFO</div>
+                <p>Click "Connect" to establish WebSocket connection to the Inktrad backend.</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let ws = null;
+        let messageCount = 0;
+        let tickCount = 0;
+        let subscribedInstruments = new Set();
+
+        function updateStatus(connected) {
+            const statusEl = document.getElementById('status');
+            if (connected) {
+                statusEl.textContent = '● Connected';
+                statusEl.className = 'status connected';
+            } else {
+                statusEl.textContent = '● Disconnected';
+                statusEl.className = 'status disconnected';
+            }
+        }
+
+        function updateStats() {
+            document.getElementById('messageCount').textContent = messageCount;
+            document.getElementById('tickCount').textContent = tickCount;
+            document.getElementById('subscribedCount').textContent = subscribedInstruments.size;
+        }
+
+        function addFeedItem(type, message, data = null) {
+            const feed = document.getElementById('feed');
+            const item = document.createElement('div');
+            item.className = 'feed-item';
+            
+            const time = new Date().toLocaleTimeString();
+            const typeClass = type.toLowerCase();
+            
+            let html = `
+                <div class="time">${time}</div>
+                <div class="type ${typeClass}">${type}</div>
+                <p>${message}</p>
+            `;
+            
+            if (data) {
+                html += `<pre>${JSON.stringify(data, null, 2)}</pre>`;
+            }
+            
+            item.innerHTML = html;
+            feed.insertBefore(item, feed.firstChild);
+            
+            // Keep only last 50 items
+            while (feed.children.length > 50) {
+                feed.removeChild(feed.lastChild);
+            }
+            
+            messageCount++;
+            updateStats();
+        }
+
+        function connect() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                addFeedItem('ERROR', 'Already connected');
+                return;
+            }
+
+            ws = new WebSocket('ws://localhost:8000/ws/live-feed');
+
+            ws.onopen = () => {
+                updateStatus(true);
+                addFeedItem('CONNECTION', 'Successfully connected to Inktrad backend');
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    
+                    if (data.type === 'connection') {
+                        addFeedItem('CONNECTION', data.message);
+                    } else if (data.type === 'subscription') {
+                        if (data.action === 'subscribed') {
+                            data.instruments.forEach(inst => subscribedInstruments.add(inst));
+                        } else if (data.action === 'unsubscribed') {
+                            data.instruments.forEach(inst => subscribedInstruments.delete(inst));
+                        }
+                        addFeedItem('SUBSCRIPTION', `${data.action} to instruments`, data.instruments);
+                        updateStats();
+                    } else if (data.type === 'tick') {
+                        tickCount++;
+                        addFeedItem('TICK', `Market data for ${data.security_id}`, data.data);
+                    } else if (data.type === 'pong') {
+                        addFeedItem('CONNECTION', 'Pong received');
+                    } else if (data.type === 'error') {
+                        addFeedItem('ERROR', data.message);
+                    } else {
+                        addFeedItem('INFO', 'Unknown message type', data);
+                    }
+                } catch (e) {
+                    addFeedItem('ERROR', 'Failed to parse message: ' + e.message);
+                }
+            };
+
+            ws.onerror = (error) => {
+                addFeedItem('ERROR', 'WebSocket error occurred');
+                console.error('WebSocket error:', error);
+            };
+
+            ws.onclose = () => {
+                updateStatus(false);
+                addFeedItem('CONNECTION', 'Disconnected from server');
+                subscribedInstruments.clear();
+                updateStats();
+            };
+        }
+
+        function disconnect() {
+            if (ws) {
+                ws.close();
+                ws = null;
+                subscribedInstruments.clear();
+                updateStats();
+            }
+        }
+
+        function subscribe() {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                addFeedItem('ERROR', 'Not connected. Please connect first.');
+                return;
+            }
+
+            const input = document.getElementById('instruments').value;
+            const instruments = input.split(',').map(s => s.trim()).filter(s => s);
+
+            if (instruments.length === 0) {
+                addFeedItem('ERROR', 'Please enter at least one security ID');
+                return;
+            }
+
+            ws.send(JSON.stringify({
+                action: 'subscribe',
+                instruments: instruments
+            }));
+
+            addFeedItem('SUBSCRIPTION', `Subscribing to ${instruments.length} instrument(s)...`, instruments);
+        }
+
+        function clearFeed() {
+            document.getElementById('feed').innerHTML = '';
+            messageCount = 0;
+            tickCount = 0;
+            updateStats();
+        }
+
+        // Send ping every 30 seconds to keep connection alive
+        setInterval(() => {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                    action: 'ping',
+                    timestamp: Date.now()
+                }));
+            }
+        }, 30000);
+    </script>
+</body>
+</html>

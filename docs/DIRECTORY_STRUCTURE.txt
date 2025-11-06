@@ -1,0 +1,379 @@
+INKTRAD BACKEND - COMPLETE DIRECTORY STRUCTURE
+==============================================
+
+inktrad-backend/
+│
+├── 📄 Configuration Files
+│   ├── .env.example                    # Environment variables template
+│   ├── .gitignore                      # Git ignore rules
+│   ├── .dockerignore                   # Docker ignore rules
+│   ├── requirements.txt                # Python dependencies
+│   └── docker-compose.yml              # Docker Compose configuration
+│
+├── 🐳 Docker Files
+│   └── Dockerfile                      # Docker container configuration
+│
+├── 🚀 Startup Scripts
+│   └── run.py                          # Main server startup script
+│
+├── 📚 Documentation (docs/)
+│   ├── README.md                       # Documentation index
+│   ├── PROJECT_GUIDE.md                # Complete project guide
+│   └── DIRECTORY_STRUCTURE.txt         # This file
+│
+├── 🔧 Scripts (scripts/)
+│   ├── README.md                       # Scripts documentation
+│   ├── setup_env.py                    # Encryption key generator
+│   ├── fetch_historical_simple.py      # Historical data fetcher
+│   └── nse_security_ids.py             # NSE security IDs reference
+│
+├── 🧪 Tests (tests/)
+│   ├── README.md                       # Testing documentation
+│   ├── test_api.py                     # API testing script
+│   ├── test_historical_data.py         # Historical data tests
+│   ├── test_security_ids.py            # Security IDs tests
+│   └── test_marketfeed.html            # WebSocket test page
+│
+├── 📋 Project Documentation
+│   ├── README.md                       # Main project documentation
+│   └── PROJECT_STRUCTURE.md            # Project structure overview
+│
+└── 📦 Application Code (app/)
+    │
+    ├── __init__.py
+    ├── main.py                         # 🎯 FastAPI application entry point
+    │
+    ├── 🔧 core/                        # Core utilities and configuration
+    │   ├── __init__.py
+    │   ├── config.py                   # Settings and configuration management
+    │   └── security.py                 # Security utilities (JWT, encryption, hashing)
+    │
+    ├── 💾 db/                          # Database layer
+    │   ├── __init__.py
+    │   └── database.py                 # MongoDB connection and collection management
+    │
+    ├── 📋 models/                      # Pydantic data models
+    │   ├── __init__.py
+    │   ├── user.py                     # User models (Create, Login, Response, InDB)
+    │   ├── order.py                    # Order models (Place, Modify, Response)
+    │   └── watchlist.py                # Watchlist models (Create, Response, Instrument)
+    │
+    ├── 🔌 services/                    # Business logic services
+    │   ├── __init__.py
+    │   ├── dhan_service.py             # DHAN API integration service
+    │   └── websocket_manager.py        # 🌟 Dual WebSocket architecture
+    │                                   #    - ConnectionManager (React clients)
+    │                                   #    - DhanWebSocketManager (DHAN feed)
+    │
+    └── 🌐 api/                         # API routes
+        ├── __init__.py
+        ├── deps.py                     # FastAPI dependencies (auth, user injection)
+        │
+        └── v2/                         # API version 1
+            ├── __init__.py
+            ├── auth_router.py          # Authentication endpoints
+            │                           #   POST /auth/register
+            │                           #   POST /auth/login
+            │                           #   POST /auth/dhan-credentials
+            │                           #   GET  /auth/me
+            │
+            ├── dhan_router.py          # DHAN API proxy endpoints
+            │                           #   GET    /api/v2/dhan/profile
+            │                           #   GET    /api/v2/dhan/funds
+            │                           #   GET    /api/v2/dhan/positions
+            │                           #   GET    /api/v2/dhan/holdings
+            │                           #   GET    /api/v2/dhan/order-book
+            │                           #   GET    /api/v2/dhan/trade-book
+            │                           #   POST   /api/v2/dhan/place-order
+            │                           #   PUT    /api/v2/dhan/modify-order
+            │                           #   DELETE /api/v2/dhan/cancel-order/{id}
+            │
+            └── watchlist_router.py     # Watchlist management endpoints
+                                        #   POST   /api/v2/watchlist
+                                        #   GET    /api/v2/watchlist
+                                        #   GET    /api/v2/watchlist/{id}
+                                        #   PUT    /api/v2/watchlist/{id}
+                                        #   DELETE /api/v2/watchlist/{id}
+                                        #   POST   /api/v2/watchlist/{id}/add
+                                        #   DELETE /api/v2/watchlist/{id}/remove
+
+
+KEY COMPONENTS EXPLAINED
+========================
+
+🎯 main.py
+   - FastAPI application initialization
+   - CORS middleware configuration
+   - Router registration
+   - WebSocket endpoint: WS /ws/live-feed
+   - Lifespan events (startup/shutdown)
+   - Health check endpoint: GET /health
+
+🌟 websocket_manager.py (MOST CRITICAL)
+   - ConnectionManager: Manages React client connections
+   - DhanWebSocketManager: Manages DHAN WebSocket feed (singleton)
+   - Intelligent subscription management
+   - Auto-reconnection logic
+   - Broadcasting tick data to clients
+
+🔐 security.py
+   - Password hashing (Bcrypt)
+   - Credential encryption (Fernet)
+   - JWT token creation and validation
+   - Secure data handling
+
+💾 database.py
+   - MongoDB connection with Motor (async)
+   - Collection getters
+   - Index creation
+   - Connection lifecycle management
+
+🔌 dhan_service.py
+   - DHAN API client initialization per user
+   - All trading operations (orders, positions, funds, etc.)
+   - Error handling and logging
+   - Credential decryption
+
+
+MONGODB COLLECTIONS
+===================
+
+users
+   - _id: ObjectId
+   - username: str (unique, indexed)
+   - email: str (unique, indexed)
+   - hashed_password: str
+   - dhan_client_id: str (encrypted)
+   - dhan_access_token: str (encrypted)
+   - created_at: datetime
+
+watchlists
+   - _id: ObjectId
+   - user_id: str (indexed)
+   - name: str
+   - instruments: array of {security_id, symbol, exchange_segment}
+   - created_at: datetime
+   - updated_at: datetime
+
+orders_log
+   - _id: ObjectId
+   - user_id: str (indexed)
+   - dhan_order_id: str (indexed)
+   - symbol: str
+   - security_id: str
+   - exchange_segment: str
+   - transaction_type: str (BUY/SELL)
+   - quantity: int
+   - price: float
+   - trigger_price: float
+   - order_type: str
+   - product_type: str
+   - status: str
+   - timestamp: datetime (indexed)
+
+
+WEBSOCKET DATA FLOW
+===================
+
+1. React Client connects to WS /ws/live-feed
+2. Client sends: {"action": "subscribe", "instruments": ["1333", "26000"]}
+3. ConnectionManager registers client subscription
+4. ConnectionManager tells DhanWebSocketManager to subscribe
+5. DhanWebSocketManager subscribes to DHAN (if not already subscribed)
+6. DHAN sends tick data
+7. DhanWebSocketManager receives tick
+8. DhanWebSocketManager forwards to ConnectionManager
+9. ConnectionManager broadcasts to all subscribed clients
+10. React Client receives real-time market data
+
+
+API ENDPOINTS SUMMARY
+=====================
+
+Authentication (No auth required)
+   POST /auth/register          - Register new user
+   POST /auth/login             - Login and get JWT token
+
+Authentication (Auth required)
+   POST /auth/dhan-credentials  - Add/update DHAN credentials
+   GET  /auth/me                - Get current user profile
+
+DHAN API (Auth required + DHAN credentials required)
+   GET    /api/v2/dhan/profile      - Get trading profile
+   GET    /api/v2/dhan/funds        - Get available funds
+   GET    /api/v2/dhan/positions    - Get open positions
+   GET    /api/v2/dhan/holdings     - Get holdings
+   GET    /api/v2/dhan/order-book   - Get order book
+   GET    /api/v2/dhan/trade-book   - Get trade book
+   POST   /api/v2/dhan/place-order  - Place new order
+   PUT    /api/v2/dhan/modify-order - Modify existing order
+   DELETE /api/v2/dhan/cancel-order/{order_id} - Cancel order
+
+Watchlist (Auth required)
+   POST   /api/v2/watchlist             - Create watchlist
+   GET    /api/v2/watchlist             - Get all watchlists
+   GET    /api/v2/watchlist/{id}        - Get specific watchlist
+   PUT    /api/v2/watchlist/{id}        - Update watchlist
+   DELETE /api/v2/watchlist/{id}        - Delete watchlist
+   POST   /api/v2/watchlist/{id}/add    - Add instrument
+   DELETE /api/v2/watchlist/{id}/remove - Remove instrument
+
+WebSocket
+   WS /ws/live-feed - Real-time market data feed
+
+Utility
+   GET /              - Root endpoint
+   GET /health        - Health check
+   GET /docs          - Swagger UI (API documentation)
+   GET /redoc         - ReDoc (Alternative API documentation)
+
+
+QUICK START COMMANDS
+====================
+
+Setup:
+   python -m venv venv
+   venv\Scripts\activate          # Windows
+   source venv/bin/activate       # macOS/Linux
+   pip install -r requirements.txt
+   python setup_env.py            # Generate encryption key
+   # Edit .env with your settings
+
+Run Server:
+   python run.py
+   # OR
+   uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+
+Test API:
+   python test_api.py
+
+Docker:
+   docker-compose up -d           # Start all services
+   docker-compose logs -f         # View logs
+   docker-compose down            # Stop all services
+
+
+ENVIRONMENT VARIABLES (.env)
+============================
+
+Required:
+   MONGODB_URL                    # MongoDB connection string
+   DATABASE_NAME                  # Database name
+   JWT_SECRET_KEY                 # Secret key for JWT
+   ENCRYPTION_KEY                 # Encryption key (from setup_env.py)
+   DHAN_MASTER_CLIENT_ID          # DHAN client ID
+   DHAN_MASTER_ACCESS_TOKEN       # DHAN access token
+
+Optional:
+   JWT_ALGORITHM                  # Default: HS256
+   ACCESS_TOKEN_EXPIRE_MINUTES    # Default: 1440 (24 hours)
+   HOST                           # Default: 0.0.0.0
+   PORT                           # Default: 8000
+   RELOAD                         # Default: False
+   CORS_ORIGINS                   # Comma-separated URLs
+
+
+FILE SIZES (Approximate)
+========================
+
+Configuration & Setup:
+   .env.example           ~500 bytes
+   .gitignore            ~400 bytes
+   requirements.txt      ~300 bytes
+   run.py                ~300 bytes
+   setup_env.py          ~800 bytes
+
+Application Code:
+   main.py               ~6 KB
+   config.py             ~2 KB
+   security.py           ~3 KB
+   database.py           ~3 KB
+   user.py               ~2 KB
+   order.py              ~3 KB
+   watchlist.py          ~2 KB
+   dhan_service.py       ~8 KB
+   websocket_manager.py  ~12 KB (CRITICAL COMPONENT)
+   deps.py               ~2 KB
+   auth_router.py        ~6 KB
+   dhan_router.py        ~7 KB
+   watchlist_router.py   ~10 KB
+
+Documentation:
+   README.md             ~8 KB
+   QUICKSTART.md         ~10 KB
+   ARCHITECTURE.md       ~15 KB
+   API_EXAMPLES.md       ~12 KB
+   DEPLOYMENT.md         ~10 KB
+   PROJECT_SUMMARY.md    ~12 KB
+
+Total: ~130 KB of production-ready code and documentation
+
+
+TECHNOLOGY STACK
+================
+
+Backend Framework:
+   - FastAPI 0.104.1
+   - Uvicorn 0.24.0 (ASGI server)
+
+Database:
+   - MongoDB 6.0+
+   - Motor 3.3.2 (async driver)
+
+Authentication & Security:
+   - python-jose 3.3.0 (JWT)
+   - passlib 1.7.4 (password hashing)
+   - cryptography 41.0.7 (encryption)
+
+Trading API:
+   - dhanhq 2.0.0
+
+Data Validation:
+   - Pydantic 2.5.0
+   - pydantic-settings 2.1.0
+
+Utilities:
+   - python-dotenv 1.0.0
+   - websockets 12.0
+
+
+DEVELOPMENT WORKFLOW
+====================
+
+1. Local Development:
+   - Use .env for configuration
+   - Hot reload enabled (RELOAD=True)
+   - MongoDB local or Atlas
+   - Test with Swagger UI at /docs
+
+2. Testing:
+   - Run test_api.py for automated tests
+   - Manual testing with Swagger UI
+   - WebSocket testing with provided HTML
+
+3. Production Deployment:
+   - Use DEPLOYMENT.md guide
+   - Set RELOAD=False
+   - Use strong secrets
+   - Enable HTTPS
+   - Set up monitoring
+
+
+SUPPORT & DOCUMENTATION
+========================
+
+For detailed information, refer to:
+   - README.md          - Project overview
+   - QUICKSTART.md      - Get started in 5 minutes
+   - ARCHITECTURE.md    - System design and architecture
+   - API_EXAMPLES.md    - API usage with examples
+   - DEPLOYMENT.md      - Production deployment guide
+   - PROJECT_SUMMARY.md - Complete project summary
+
+Interactive API Documentation:
+   - http://localhost:8000/docs  (Swagger UI)
+   - http://localhost:8000/redoc (ReDoc)
+
+
+END OF DIRECTORY STRUCTURE
+===========================

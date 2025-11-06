@@ -1,0 +1,548 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multi-Index Options Data Test - Inktrad</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            padding: 30px;
+        }
+        
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+        }
+        
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+        
+        .form-section {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        
+        .form-group {
+            margin-bottom: 15px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 600;
+            color: #333;
+        }
+        
+        input, select {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+        
+        .checkbox-group {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 10px;
+            margin-top: 10px;
+        }
+        
+        .checkbox-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .checkbox-item input[type="checkbox"] {
+            width: auto;
+        }
+        
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 5px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+        
+        button:hover {
+            transform: translateY(-2px);
+        }
+        
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+        
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 20px;
+            color: #667eea;
+        }
+        
+        .loading.show {
+            display: block;
+        }
+        
+        .results {
+            margin-top: 30px;
+        }
+        
+        .index-card {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            border-left: 4px solid #667eea;
+        }
+        
+        .index-header {
+            font-size: 20px;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 15px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .security-id {
+            font-size: 14px;
+            color: #666;
+            font-weight: normal;
+        }
+        
+        .data-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 15px;
+        }
+        
+        .data-item {
+            background: white;
+            padding: 15px;
+            border-radius: 5px;
+            border: 1px solid #e0e0e0;
+        }
+        
+        .data-item-header {
+            font-weight: 600;
+            color: #667eea;
+            margin-bottom: 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .status-badge {
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        
+        .status-success {
+            background: #d4edda;
+            color: #155724;
+        }
+        
+        .status-error {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        
+        .data-stats {
+            font-size: 14px;
+            color: #666;
+        }
+        
+        .summary-box {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin-top: 15px;
+        }
+        
+        .summary-item {
+            text-align: center;
+        }
+        
+        .summary-value {
+            font-size: 32px;
+            font-weight: 700;
+        }
+        
+        .summary-label {
+            font-size: 14px;
+            opacity: 0.9;
+        }
+        
+        pre {
+            background: #f4f4f4;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+            font-size: 12px;
+        }
+        
+        .error-message {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 15px;
+            border-radius: 5px;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📊 Multi-Index Options Data Test</h1>
+        <p class="subtitle">Fetch historical options data for NIFTY, BANKNIFTY, NIFTY IT, and NIFTY FINANCIAL</p>
+        
+        <div class="form-section">
+            <h3>Configuration</h3>
+            
+            <div class="form-group">
+                <label>Date Range</label>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                    <input type="date" id="fromDate" placeholder="From Date">
+                    <input type="date" id="toDate" placeholder="To Date">
+                </div>
+            </div>
+            
+            <div class="form-group">
+                <label>Interval (minutes)</label>
+                <select id="interval">
+                    <option value="1">1 minute</option>
+                    <option value="5">5 minutes</option>
+                    <option value="15">15 minutes</option>
+                    <option value="25">25 minutes</option>
+                    <option value="60">60 minutes</option>
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label>Expiry Settings</label>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                    <select id="expiryFlag">
+                        <option value="MONTH">Monthly</option>
+                        <option value="WEEK">Weekly</option>
+                    </select>
+                    <select id="expiryCode">
+                        <option value="1">Near Expiry (1)</option>
+                        <option value="2">Next Expiry (2)</option>
+                        <option value="3">Far Expiry (3)</option>
+                    </select>
+                </div>
+            </div>
+            
+            <div class="form-group">
+                <label>Select Indices</label>
+                <div class="checkbox-group">
+                    <div class="checkbox-item">
+                        <input type="checkbox" id="idx_nifty" value="NIFTY" checked>
+                        <label for="idx_nifty" style="margin: 0;">NIFTY 50</label>
+                    </div>
+                    <div class="checkbox-item">
+                        <input type="checkbox" id="idx_banknifty" value="BANKNIFTY" checked>
+                        <label for="idx_banknifty" style="margin: 0;">NIFTY BANK</label>
+                    </div>
+                    <div class="checkbox-item">
+                        <input type="checkbox" id="idx_niftyit" value="NIFTY_IT" checked>
+                        <label for="idx_niftyit" style="margin: 0;">NIFTY IT</label>
+                    </div>
+                    <div class="checkbox-item">
+                        <input type="checkbox" id="idx_niftyfin" value="NIFTY_FINANCIAL" checked>
+                        <label for="idx_niftyfin" style="margin: 0;">NIFTY FINANCIAL</label>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="form-group">
+                <label>Select Strikes</label>
+                <div class="checkbox-group">
+                    <div class="checkbox-item">
+                        <input type="checkbox" id="strike_atm" value="ATM" checked>
+                        <label for="strike_atm" style="margin: 0;">ATM</label>
+                    </div>
+                    <div class="checkbox-item">
+                        <input type="checkbox" id="strike_atm1" value="ATM+1" checked>
+                        <label for="strike_atm1" style="margin: 0;">ATM+1</label>
+                    </div>
+                    <div class="checkbox-item">
+                        <input type="checkbox" id="strike_atm_1" value="ATM-1" checked>
+                        <label for="strike_atm_1" style="margin: 0;">ATM-1</label>
+                    </div>
+                    <div class="checkbox-item">
+                        <input type="checkbox" id="strike_atm2" value="ATM+2">
+                        <label for="strike_atm2" style="margin: 0;">ATM+2</label>
+                    </div>
+                    <div class="checkbox-item">
+                        <input type="checkbox" id="strike_atm_2" value="ATM-2">
+                        <label for="strike_atm_2" style="margin: 0;">ATM-2</label>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="form-group">
+                <label>Select Option Types</label>
+                <div class="checkbox-group">
+                    <div class="checkbox-item">
+                        <input type="checkbox" id="opt_call" value="CALL" checked>
+                        <label for="opt_call" style="margin: 0;">CALL</label>
+                    </div>
+                    <div class="checkbox-item">
+                        <input type="checkbox" id="opt_put" value="PUT" checked>
+                        <label for="opt_put" style="margin: 0;">PUT</label>
+                    </div>
+                </div>
+            </div>
+            
+            <button onclick="fetchMultiIndexOptions()" id="fetchBtn">
+                🚀 Fetch Options Data
+            </button>
+        </div>
+        
+        <div class="loading" id="loading">
+            <h3>⏳ Fetching data from DHAN API...</h3>
+            <p>This may take a few moments depending on the number of requests.</p>
+        </div>
+        
+        <div class="results" id="results"></div>
+    </div>
+    
+    <script>
+        // Set default dates (last 30 days)
+        const today = new Date();
+        const thirtyDaysAgo = new Date(today);
+        thirtyDaysAgo.setDate(today.getDate() - 30);
+        
+        document.getElementById('fromDate').value = thirtyDaysAgo.toISOString().split('T')[0];
+        document.getElementById('toDate').value = today.toISOString().split('T')[0];
+        
+        function getSelectedValues(name) {
+            const checkboxes = document.querySelectorAll(`input[type="checkbox"][id^="${name}"]:checked`);
+            return Array.from(checkboxes).map(cb => cb.value);
+        }
+        
+        async function fetchMultiIndexOptions() {
+            const resultsDiv = document.getElementById('results');
+            const loadingDiv = document.getElementById('loading');
+            const fetchBtn = document.getElementById('fetchBtn');
+            
+            // Get form values
+            const fromDate = document.getElementById('fromDate').value;
+            const toDate = document.getElementById('toDate').value;
+            const interval = document.getElementById('interval').value;
+            const expiryFlag = document.getElementById('expiryFlag').value;
+            const expiryCode = parseInt(document.getElementById('expiryCode').value);
+            
+            const indices = getSelectedValues('idx_');
+            const strikes = getSelectedValues('strike_');
+            const optionTypes = getSelectedValues('opt_');
+            
+            // Validate
+            if (!fromDate || !toDate) {
+                alert('Please select both from and to dates');
+                return;
+            }
+            
+            if (indices.length === 0) {
+                alert('Please select at least one index');
+                return;
+            }
+            
+            if (strikes.length === 0) {
+                alert('Please select at least one strike');
+                return;
+            }
+            
+            if (optionTypes.length === 0) {
+                alert('Please select at least one option type');
+                return;
+            }
+            
+            // Show loading
+            loadingDiv.classList.add('show');
+            resultsDiv.innerHTML = '';
+            fetchBtn.disabled = true;
+            
+            try {
+                const requestData = {
+                    fromDate,
+                    toDate,
+                    interval,
+                    expiryFlag,
+                    expiryCode,
+                    strikes,
+                    optionTypes,
+                    indices
+                };
+                
+                const response = await fetch('http://localhost:8000/api/v2/dhan/demo/expired-options-multi', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(requestData)
+                });
+                
+                const data = await response.json();
+                
+                loadingDiv.classList.remove('show');
+                fetchBtn.disabled = false;
+                
+                if (data.status === 'success') {
+                    displayResults(data);
+                } else {
+                    displayError(data);
+                }
+                
+            } catch (error) {
+                loadingDiv.classList.remove('show');
+                fetchBtn.disabled = false;
+                resultsDiv.innerHTML = `
+                    <div class="error-message">
+                        <h3>❌ Error</h3>
+                        <p>${error.message}</p>
+                    </div>
+                `;
+            }
+        }
+        
+        function displayResults(data) {
+            const resultsDiv = document.getElementById('results');
+            const { summary, results } = data;
+            
+            let html = `
+                <div class="summary-box">
+                    <h2>📊 Fetch Summary</h2>
+                    <div class="summary-grid">
+                        <div class="summary-item">
+                            <div class="summary-value">${summary.total_indices}</div>
+                            <div class="summary-label">Indices</div>
+                        </div>
+                        <div class="summary-item">
+                            <div class="summary-value">${summary.total_requests}</div>
+                            <div class="summary-label">Total Requests</div>
+                        </div>
+                        <div class="summary-item">
+                            <div class="summary-value">${summary.date_range.from}</div>
+                            <div class="summary-label">From Date</div>
+                        </div>
+                        <div class="summary-item">
+                            <div class="summary-value">${summary.date_range.to}</div>
+                            <div class="summary-label">To Date</div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            // Display each index
+            for (const [indexKey, indexData] of Object.entries(results)) {
+                html += `
+                    <div class="index-card">
+                        <div class="index-header">
+                            ${indexData.display_name}
+                            <span class="security-id">Security ID: ${indexData.security_id}</span>
+                        </div>
+                        <div class="data-grid">
+                `;
+                
+                for (const [dataKey, dataValue] of Object.entries(indexData.data)) {
+                    const isSuccess = dataValue.status === 'success';
+                    const statusClass = isSuccess ? 'status-success' : 'status-error';
+                    
+                    let dataInfo = '';
+                    if (isSuccess && dataValue.data && dataValue.data.open) {
+                        const candleCount = dataValue.data.open.length;
+                        dataInfo = `<div class="data-stats">${candleCount} candles fetched</div>`;
+                    } else if (!isSuccess) {
+                        dataInfo = `<div class="error-message">${dataValue.message}</div>`;
+                    } else {
+                        dataInfo = `<div class="data-stats">No data available</div>`;
+                    }
+                    
+                    html += `
+                        <div class="data-item">
+                            <div class="data-item-header">
+                                ${dataValue.strike} ${dataValue.option_type}
+                                <span class="status-badge ${statusClass}">${dataValue.status}</span>
+                            </div>
+                            ${dataInfo}
+                        </div>
+                    `;
+                }
+                
+                html += `
+                        </div>
+                    </div>
+                `;
+            }
+            
+            // Add raw JSON
+            html += `
+                <details style="margin-top: 20px;">
+                    <summary style="cursor: pointer; font-weight: 600; padding: 10px; background: #f8f9fa; border-radius: 5px;">
+                        📄 View Raw JSON Response
+                    </summary>
+                    <pre>${JSON.stringify(data, null, 2)}</pre>
+                </details>
+            `;
+            
+            resultsDiv.innerHTML = html;
+        }
+        
+        function displayError(data) {
+            const resultsDiv = document.getElementById('results');
+            resultsDiv.innerHTML = `
+                <div class="error-message">
+                    <h3>❌ Error</h3>
+                    <p>${data.message}</p>
+                    ${data.hint ? `<p><strong>Hint:</strong> ${data.hint}</p>` : ''}
+                    <details style="margin-top: 10px;">
+                        <summary style="cursor: pointer;">View Details</summary>
+                        <pre>${JSON.stringify(data, null, 2)}</pre>
+                    </details>
+                </div>
+            `;
+        }
+    </script>
+</body>
+</html>

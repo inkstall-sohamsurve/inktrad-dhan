@@ -1,0 +1,979 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Historical Data Test - Inktrad</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            padding: 30px;
+        }
+        
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 5px;
+            color: #555;
+            font-weight: 500;
+        }
+        
+        input, select {
+            width: 100%;
+            padding: 10px;
+            border: 2px solid #e0e0e0;
+            border-radius: 5px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+        
+        input:focus, select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 12px 30px;
+            border: none;
+            border-radius: 5px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: transform 0.2s;
+            margin-right: 10px;
+        }
+        
+        .btn:hover {
+            transform: translateY(-2px);
+        }
+        
+        .btn-secondary {
+            background: linear-gradient(135deg, #6c757d 0%, #495057 100%);
+        }
+        
+        .btn-secondary:hover {
+            background: linear-gradient(135deg, #5a6268 0%, #343a40 100%);
+        }
+        
+        .result-container {
+            margin-top: 30px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 5px;
+            display: none;
+        }
+        
+        .result-container.show {
+            display: block;
+        }
+        
+        .result-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+        
+        .result-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: #333;
+        }
+        
+        .status-badge {
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        
+        .status-success {
+            background: #d4edda;
+            color: #155724;
+        }
+        
+        .status-error {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        
+        .data-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+            background: white;
+            border-radius: 5px;
+            overflow: hidden;
+        }
+        
+        .data-table th {
+            background: #667eea;
+            color: white;
+            padding: 12px;
+            text-align: left;
+            font-weight: 600;
+        }
+        
+        .data-table td {
+            padding: 10px 12px;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        
+        .data-table tr:hover {
+            background: #f8f9fa;
+        }
+        
+        .json-view {
+            background: #2d2d2d;
+            color: #f8f8f2;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #667eea;
+        }
+        
+        .spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 10px;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>
+            📊 Historical Data Test
+        </h1>
+        <p class="subtitle">Test the Dhan API historical data integration</p>
+        
+        <div class="grid">
+            <div class="form-group">
+                <label for="securityId">Security ID:</label>
+                <input type="text" id="securityId" value="1333" placeholder="Enter Security ID">
+                <small class="help-text">
+                    Common NSE Security IDs: 
+                    <select id="commonStocks" onchange="document.getElementById('securityId').value = this.value">
+                        <option value="">Select a stock...</option>
+                        <option value="1333">1333 - HDFC Bank</option>
+                        <option value="2885">2885 - Reliance Industries</option>
+                        <option value="11536">11536 - TCS</option>
+                        <option value="1594">1594 - Infosys</option>
+                        <option value="4963">4963 - ICICI Bank</option>
+                        <option value="3045">3045 - SBI</option>
+                        <option value="3499">3499 - Tata Steel</option>
+                        <option value="11630">11630 - NTPC</option>
+                        <option value="11631">11631 - Power Grid</option>
+                        <option value="20374">20374 - Coal India</option>
+                        <option value="3787">3787 - Wipro</option>
+                        <option value="1394">1394 - Hindustan Unilever</option>
+                        <option value="1660">1660 - ITC</option>
+                        <option value="1660">1660 - Bajaj Auto</option>
+                        <option value="10999">10999 - Maruti Suzuki</option>
+                    </select>
+                </small>
+            </div>
+            
+            <div class="form-group">
+                <label for="exchangeSegment">Exchange Segment</label>
+                <select id="exchangeSegment">
+                    <option value="NSE_EQ">NSE_EQ</option>
+                    <option value="BSE_EQ">BSE_EQ</option>
+                    <option value="NSE_FNO">NSE_FNO</option>
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label for="instrumentType">Instrument Type</label>
+                <select id="instrumentType">
+                    <option value="EQUITY">EQUITY</option>
+                    <option value="FUTIDX">FUTIDX</option>
+                    <option value="OPTIDX">OPTIDX</option>
+                </select>
+            </div>
+        </div>
+        
+        <div class="grid">
+            <div class="form-group">
+                <label for="fromDate">From Date</label>
+                <input type="date" id="fromDate">
+            </div>
+            
+            <div class="form-group">
+                <label for="toDate">To Date</label>
+                <input type="date" id="toDate">
+            </div>
+        </div>
+        
+        <div style="margin-top: 20px;">
+            <button class="btn" onclick="fetchHistoricalData()">Fetch Daily Data</button>
+            <button class="btn" onclick="fetchIntradayData()">Fetch Intraday Data</button>
+            <button class="btn btn-secondary" onclick="toggleExpiredOptionsForm()">Fetch Expired Options</button>
+            <button class="btn btn-secondary" onclick="toggleNifty50Form()">Fetch NIFTY 50 Stocks</button>
+        </div>
+        
+        <!-- Expired Options Form -->
+        <div id="expiredOptionsForm" style="display: none; margin-top: 20px; padding: 20px; border: 1px solid #ddd; border-radius: 8px; background: #f9f9f9;">
+            <h3 style="margin-top: 0;">Expired Options Parameters</h3>
+            <div class="grid">
+                <div class="form-group">
+                    <label for="eoSecurityId">Security ID</label>
+                    <select id="eoSecurityId">
+                        <option value="13">13 - NIFTY</option>
+                        <option value="26009">26009 - BANKNIFTY</option>
+                        <option value="26001">26001 - NIFTY IT</option>
+                        <option value="26074">26074 - NIFTY FINANCIAL</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label for="eoInstrument">Instrument</label>
+                    <select id="eoInstrument">
+                        <option value="OPTIDX">OPTIDX (Index Options)</option>
+                        <option value="OPTFUT">OPTFUT (Stock Options)</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label for="eoInterval">Interval (minutes)</label>
+                    <select id="eoInterval">
+                        <option value="1">1 minute</option>
+                        <option value="5">5 minutes</option>
+                        <option value="15">15 minutes</option>
+                        <option value="25">25 minutes</option>
+                        <option value="60">60 minutes</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label for="eoExpiryFlag">Expiry Flag</label>
+                    <select id="eoExpiryFlag">
+                        <option value="MONTH">MONTH</option>
+                        <option value="WEEK">WEEK</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label for="eoExpiryCode">Expiry Code</label>
+                    <select id="eoExpiryCode">
+                        <option value="1">1 (Near)</option>
+                        <option value="2">2 (Next)</option>
+                        <option value="3">3 (Far)</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label for="eoStrike">Strike</label>
+                    <select id="eoStrike">
+                        <option value="ATM">ATM</option>
+                        <option value="ATM+1">ATM+1</option>
+                        <option value="ATM+2">ATM+2</option>
+                        <option value="ATM+3">ATM+3</option>
+                        <option value="ATM-1">ATM-1</option>
+                        <option value="ATM-2">ATM-2</option>
+                        <option value="ATM-3">ATM-3</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label for="eoOptionType">Option Type</label>
+                    <select id="eoOptionType">
+                        <option value="CALL">CALL</option>
+                        <option value="PUT">PUT</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label for="eoFromDate">From Date</label>
+                    <input type="date" id="eoFromDate">
+                </div>
+                
+                <div class="form-group">
+                    <label for="eoToDate">To Date (max 30 days)</label>
+                    <input type="date" id="eoToDate">
+                </div>
+            </div>
+            <div style="margin-top: 15px;">
+                <button class="btn" onclick="fetchExpiredOptions()">Fetch Data</button>
+            </div>
+        </div>
+        
+        <!-- NIFTY 50 Stocks Form -->
+        <div id="nifty50Form" style="display: none; margin-top: 20px; padding: 20px; border: 1px solid #ddd; border-radius: 8px; background: #f9f9f9;">
+            <h3 style="margin-top: 0;">📊 NIFTY 50 Stocks Selection</h3>
+            <p style="color: #666; margin-bottom: 15px;">Select individual stocks to fetch historical data</p>
+            
+            <div class="form-group">
+                <label>Date Range</label>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                    <input type="date" id="n50FromDate">
+                    <input type="date" id="n50ToDate">
+                </div>
+            </div>
+            
+            <div class="form-group">
+                <label>
+                    <input type="checkbox" id="selectAllStocks" onchange="toggleAllStocks(this.checked)">
+                    Select All Stocks
+                </label>
+            </div>
+            
+            <div style="max-height: 400px; overflow-y: auto; border: 1px solid #ddd; padding: 15px; border-radius: 5px; background: white;">
+                <h4 style="margin-top: 0; color: #667eea;">Banking & Financial Services</h4>
+                <div class="grid">
+                    <label><input type="checkbox" class="stock-checkbox" value="HDFC Bank" data-id="1333" data-symbol="HDFCBANK"> HDFC Bank</label>
+                    <label><input type="checkbox" class="stock-checkbox" value="ICICI Bank" data-id="4963" data-symbol="ICICIBANK"> ICICI Bank</label>
+                    <label><input type="checkbox" class="stock-checkbox" value="SBI" data-id="3045" data-symbol="SBIN"> SBI</label>
+                    <label><input type="checkbox" class="stock-checkbox" value="Kotak Mahindra Bank" data-id="1922" data-symbol="KOTAKBANK"> Kotak Mahindra Bank</label>
+                    <label><input type="checkbox" class="stock-checkbox" value="Axis Bank" data-id="5900" data-symbol="AXISBANK"> Axis Bank</label>
+                    <label><input type="checkbox" class="stock-checkbox" value="IndusInd Bank" data-id="5258" data-symbol="INDUSINDBK"> IndusInd Bank</label>
+                </div>
+                
+                <h4 style="margin-top: 15px; color: #667eea;">IT & Technology</h4>
+                <div class="grid">
+                    <label><input type="checkbox" class="stock-checkbox" value="TCS" data-id="11536" data-symbol="TCS"> TCS</label>
+                    <label><input type="checkbox" class="stock-checkbox" value="Infosys" data-id="1594" data-symbol="INFY"> Infosys</label>
+                    <label><input type="checkbox" class="stock-checkbox" value="Wipro" data-id="3787" data-symbol="WIPRO"> Wipro</label>
+                    <label><input type="checkbox" class="stock-checkbox" value="HCL Technologies" data-id="7229" data-symbol="HCLTECH"> HCL Technologies</label>
+                    <label><input type="checkbox" class="stock-checkbox" value="Tech Mahindra" data-id="13538" data-symbol="TECHM"> Tech Mahindra</label>
+                </div>
+                
+                <h4 style="margin-top: 15px; color: #667eea;">Energy & Oil & Gas</h4>
+                <div class="grid">
+                    <label><input type="checkbox" class="stock-checkbox" value="Reliance Industries" data-id="2885" data-symbol="RELIANCE"> Reliance Industries</label>
+                    <label><input type="checkbox" class="stock-checkbox" value="ONGC" data-id="2475" data-symbol="ONGC"> ONGC</label>
+                    <label><input type="checkbox" class="stock-checkbox" value="NTPC" data-id="11630" data-symbol="NTPC"> NTPC</label>
+                    <label><input type="checkbox" class="stock-checkbox" value="Power Grid" data-id="11631" data-symbol="POWERGRID"> Power Grid</label>
+                    <label><input type="checkbox" class="stock-checkbox" value="Coal India" data-id="20374" data-symbol="COALINDIA"> Coal India</label>
+                </div>
+                
+                <h4 style="margin-top: 15px; color: #667eea;">Automobile</h4>
+                <div class="grid">
+                    <label><input type="checkbox" class="stock-checkbox" value="Maruti Suzuki" data-id="10999" data-symbol="MARUTI"> Maruti Suzuki</label>
+                    <label><input type="checkbox" class="stock-checkbox" value="Mahindra & Mahindra" data-id="2031" data-symbol="M&M"> Mahindra & Mahindra</label>
+                    <label><input type="checkbox" class="stock-checkbox" value="Tata Motors" data-id="3456" data-symbol="TATAMOTORS"> Tata Motors</label>
+                    <label><input type="checkbox" class="stock-checkbox" value="Bajaj Auto" data-id="1660" data-symbol="BAJAJ-AUTO"> Bajaj Auto</label>
+                    <label><input type="checkbox" class="stock-checkbox" value="Hero MotoCorp" data-id="1348" data-symbol="HEROMOTOCO"> Hero MotoCorp</label>
+                    <label><input type="checkbox" class="stock-checkbox" value="Eicher Motors" data-id="910" data-symbol="EICHERMOT"> Eicher Motors</label>
+                </div>
+                
+                <h4 style="margin-top: 15px; color: #667eea;">FMCG & Consumer Goods</h4>
+                <div class="grid">
+                    <label><input type="checkbox" class="stock-checkbox" value="Hindustan Unilever" data-id="1394" data-symbol="HINDUNILVR"> Hindustan Unilever</label>
+                    <label><input type="checkbox" class="stock-checkbox" value="ITC" data-id="1660" data-symbol="ITC"> ITC</label>
+                    <label><input type="checkbox" class="stock-checkbox" value="Britannia Industries" data-id="547" data-symbol="BRITANNIA"> Britannia Industries</label>
+                    <label><input type="checkbox" class="stock-checkbox" value="Nestle India" data-id="1232" data-symbol="NESTLEIND"> Nestle India</label>
+                    <label><input type="checkbox" class="stock-checkbox" value="Asian Paints" data-id="7406" data-symbol="ASIANPAINT"> Asian Paints</label>
+                </div>
+                
+                <h4 style="margin-top: 15px; color: #667eea;">Metals & Mining</h4>
+                <div class="grid">
+                    <label><input type="checkbox" class="stock-checkbox" value="Tata Steel" data-id="3499" data-symbol="TATASTEEL"> Tata Steel</label>
+                    <label><input type="checkbox" class="stock-checkbox" value="JSW Steel" data-id="11723" data-symbol="JSWSTEEL"> JSW Steel</label>
+                    <label><input type="checkbox" class="stock-checkbox" value="Hindalco" data-id="1363" data-symbol="HINDALCO"> Hindalco</label>
+                </div>
+                
+                <h4 style="margin-top: 15px; color: #667eea;">Pharmaceuticals</h4>
+                <div class="grid">
+                    <label><input type="checkbox" class="stock-checkbox" value="Sun Pharmaceutical" data-id="3351" data-symbol="SUNPHARMA"> Sun Pharmaceutical</label>
+                    <label><input type="checkbox" class="stock-checkbox" value="Dr Reddy's Laboratories" data-id="881" data-symbol="DRREDDY"> Dr Reddy's Laboratories</label>
+                    <label><input type="checkbox" class="stock-checkbox" value="Cipla" data-id="701" data-symbol="CIPLA"> Cipla</label>
+                    <label><input type="checkbox" class="stock-checkbox" value="Divi's Laboratories" data-id="10940" data-symbol="DIVISLAB"> Divi's Laboratories</label>
+                </div>
+                
+                <h4 style="margin-top: 15px; color: #667eea;">Cement & Construction</h4>
+                <div class="grid">
+                    <label><input type="checkbox" class="stock-checkbox" value="UltraTech Cement" data-id="11532" data-symbol="ULTRACEMCO"> UltraTech Cement</label>
+                    <label><input type="checkbox" class="stock-checkbox" value="Grasim Industries" data-id="1232" data-symbol="GRASIM"> Grasim Industries</label>
+                    <label><input type="checkbox" class="stock-checkbox" value="Larsen & Toubro" data-id="11483" data-symbol="LT"> Larsen & Toubro</label>
+                </div>
+                
+                <h4 style="margin-top: 15px; color: #667eea;">Telecom</h4>
+                <div class="grid">
+                    <label><input type="checkbox" class="stock-checkbox" value="Bharti Airtel" data-id="10604" data-symbol="BHARTIARTL"> Bharti Airtel</label>
+                </div>
+                
+                <h4 style="margin-top: 15px; color: #667eea;">Others</h4>
+                <div class="grid">
+                    <label><input type="checkbox" class="stock-checkbox" value="Adani Ports" data-id="15083" data-symbol="ADANIPORTS"> Adani Ports</label>
+                    <label><input type="checkbox" class="stock-checkbox" value="Bajaj Finserv" data-id="16675" data-symbol="BAJAJFINSV"> Bajaj Finserv</label>
+                    <label><input type="checkbox" class="stock-checkbox" value="Bajaj Finance" data-id="16669" data-symbol="BAJFINANCE"> Bajaj Finance</label>
+                    <label><input type="checkbox" class="stock-checkbox" value="Titan Company" data-id="3506" data-symbol="TITAN"> Titan Company</label>
+                    <label><input type="checkbox" class="stock-checkbox" value="BPCL" data-id="526" data-symbol="BPCL"> BPCL</label>
+                    <label><input type="checkbox" class="stock-checkbox" value="IOC" data-id="1624" data-symbol="IOC"> IOC</label>
+                    <label><input type="checkbox" class="stock-checkbox" value="Shree Cement" data-id="3103" data-symbol="SHREECEM"> Shree Cement</label>
+                    <label><input type="checkbox" class="stock-checkbox" value="Adani Enterprises" data-id="25" data-symbol="ADANIENT"> Adani Enterprises</label>
+                    <label><input type="checkbox" class="stock-checkbox" value="Apollo Hospitals" data-id="157" data-symbol="APOLLOHOSP"> Apollo Hospitals</label>
+                    <label><input type="checkbox" class="stock-checkbox" value="Tata Consumer" data-id="3432" data-symbol="TATACONSUM"> Tata Consumer</label>
+                    <label><input type="checkbox" class="stock-checkbox" value="Bharat Electronics" data-id="383" data-symbol="BEL"> Bharat Electronics</label>
+                    <label><input type="checkbox" class="stock-checkbox" value="InterGlobe Aviation" data-id="18652" data-symbol="INDIGO"> InterGlobe Aviation</label>
+                </div>
+            </div>
+            
+            <div style="margin-top: 15px;">
+                <button class="btn" onclick="fetchSelectedNifty50Stocks()">Fetch Selected Stocks</button>
+                <span id="selectedCount" style="margin-left: 15px; color: #666;">0 stocks selected</span>
+            </div>
+        </div>
+        
+        <div id="warningMessage" style="display: none; margin-top: 15px; padding: 12px; background: #fff3cd; border-left: 4px solid #ffc107; border-radius: 4px;">
+            <strong>⚠️ Note:</strong> <span id="warningText"></span>
+        </div>
+        
+        <div id="resultContainer" class="result-container">
+            <div class="result-header">
+                <div class="result-title" id="resultTitle">Results</div>
+                <span class="status-badge" id="statusBadge"></span>
+            </div>
+            <div id="resultContent"></div>
+        </div>
+    </div>
+    
+    <script>
+        // Set default dates to current date range
+        function setDefaultDates() {
+            const today = new Date();
+            
+            // For historical data (default 30 days)
+            const thirtyDaysAgo = new Date(today);
+            thirtyDaysAgo.setDate(today.getDate() - 30);
+            
+            // For intraday data (default 5 days - within 90-day limit)
+            const fiveDaysAgo = new Date(today);
+            fiveDaysAgo.setDate(today.getDate() - 5);
+            
+            // Set historical dates by default
+            document.getElementById('fromDate').value = thirtyDaysAgo.toISOString().split('T')[0];
+            document.getElementById('toDate').value = today.toISOString().split('T')[0];
+        }
+        
+        // Update date range based on button clicked
+        function adjustDateRangeForIntraday() {
+            const today = new Date();
+            const fiveDaysAgo = new Date(today);
+            fiveDaysAgo.setDate(today.getDate() - 5);
+            
+            document.getElementById('fromDate').value = fiveDaysAgo.toISOString().split('T')[0];
+            document.getElementById('toDate').value = today.toISOString().split('T')[0];
+        }
+        
+        // Validate date range for intraday data (90-day limit)
+        function validateIntradayDateRange(fromDate, toDate) {
+            const from = new Date(fromDate);
+            const to = new Date(toDate);
+            const diffTime = Math.abs(to - from);
+            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+            
+            return diffDays <= 90;
+        }
+        
+        // Set defaults on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            setDefaultDates();
+            setExpiredOptionsDefaults();
+        });
+        
+        function setExpiredOptionsDefaults() {
+            const today = new Date();
+            const thirtyDaysAgo = new Date(today);
+            thirtyDaysAgo.setDate(today.getDate() - 30);
+            
+            document.getElementById('eoFromDate').value = thirtyDaysAgo.toISOString().split('T')[0];
+            document.getElementById('eoToDate').value = today.toISOString().split('T')[0];
+        }
+        
+        function toggleExpiredOptionsForm() {
+            const form = document.getElementById('expiredOptionsForm');
+            form.style.display = form.style.display === 'none' ? 'block' : 'none';
+        }
+        
+        function toggleNifty50Form() {
+            const form = document.getElementById('nifty50Form');
+            form.style.display = form.style.display === 'none' ? 'block' : 'none';
+            
+            // Set default dates (last 90 days)
+            if (form.style.display === 'block') {
+                const today = new Date();
+                const ninetyDaysAgo = new Date(today);
+                ninetyDaysAgo.setDate(today.getDate() - 90);
+                
+                document.getElementById('n50FromDate').value = ninetyDaysAgo.toISOString().split('T')[0];
+                document.getElementById('n50ToDate').value = today.toISOString().split('T')[0];
+                
+                updateSelectedCount();
+            }
+        }
+        
+        function toggleAllStocks(checked) {
+            const checkboxes = document.querySelectorAll('.stock-checkbox');
+            checkboxes.forEach(cb => cb.checked = checked);
+            updateSelectedCount();
+        }
+        
+        function updateSelectedCount() {
+            const checkboxes = document.querySelectorAll('.stock-checkbox:checked');
+            document.getElementById('selectedCount').textContent = `${checkboxes.length} stocks selected`;
+        }
+        
+        // Update count when individual checkboxes are clicked
+        document.addEventListener('DOMContentLoaded', function() {
+            document.addEventListener('change', function(e) {
+                if (e.target.classList.contains('stock-checkbox')) {
+                    updateSelectedCount();
+                }
+            });
+        });
+        
+        async function fetchExpiredOptions() {
+            hideWarning();
+            showLoading();
+            
+            // Build request payload
+            const requestData = {
+                exchangeSegment: "NSE_FNO",
+                interval: document.getElementById('eoInterval').value,
+                securityId: parseInt(document.getElementById('eoSecurityId').value),
+                instrument: document.getElementById('eoInstrument').value,
+                expiryFlag: document.getElementById('eoExpiryFlag').value,
+                expiryCode: parseInt(document.getElementById('eoExpiryCode').value),
+                strike: document.getElementById('eoStrike').value,
+                drvOptionType: document.getElementById('eoOptionType').value,
+                requiredData: ["open", "high", "low", "close", "volume", "iv", "oi", "spot", "strike"],
+                fromDate: document.getElementById('eoFromDate').value,
+                toDate: document.getElementById('eoToDate').value
+            };
+            
+            // Validate date range (max 30 days)
+            const fromDate = new Date(requestData.fromDate);
+            const toDate = new Date(requestData.toDate);
+            const diffTime = Math.abs(toDate - fromDate);
+            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+            
+            if (diffDays > 30) {
+                showError('Expired options request exceeds 30-day limit. Please select a shorter date range.');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/v2/dhan/demo/expired-options', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(requestData)
+                });
+                
+                const data = await response.json();
+                
+                if (data.status === 'error') {
+                    showError(data.message || 'Failed to fetch expired options data');
+                } else if (response.ok) {
+                    showSuccess(data);
+                } else {
+                    showError(data.detail || 'Failed to fetch expired options data');
+                }
+            } catch (error) {
+                showError('Network error: ' + error.message);
+            }
+        }
+        
+        function showLoading() {
+            const container = document.getElementById('resultContainer');
+            const content = document.getElementById('resultContent');
+            container.classList.add('show');
+            content.innerHTML = '<div class="loading"><div class="spinner"></div>Fetching data...</div>';
+        }
+        
+        function showError(message) {
+            document.getElementById('statusBadge').textContent = 'Error';
+            document.getElementById('statusBadge').className = 'status-badge status-error';
+            document.getElementById('resultContent').innerHTML = `<p style="color: #721c24;">${message}</p>`;
+        }
+        
+        function showWarning(message) {
+            const warningDiv = document.getElementById('warningMessage');
+            const warningText = document.getElementById('warningText');
+            warningText.textContent = message;
+            warningDiv.style.display = 'block';
+            
+            // Hide result container
+            const container = document.getElementById('resultContainer');
+            container.classList.remove('show');
+        }
+        
+        function hideWarning() {
+            const warningDiv = document.getElementById('warningMessage');
+            warningDiv.style.display = 'none';
+        }
+        
+        function showSuccess(data) {
+            document.getElementById('statusBadge').textContent = 'Success';
+            document.getElementById('statusBadge').className = 'status-badge status-success';
+            
+            const actualData = data.data || data;
+            
+            let html = '<h3>Data Preview (First 10 candles)</h3>';
+            html += '<table class="data-table">';
+            html += '<thead><tr><th>Index</th><th>Open</th><th>High</th><th>Low</th><th>Close</th><th>Volume</th></tr></thead>';
+            html += '<tbody>';
+            
+            if (actualData.open && actualData.open.length > 0) {
+                const count = Math.min(10, actualData.open.length);
+                for (let i = 0; i < count; i++) {
+                    html += `<tr>
+                        <td>${i}</td>
+                        <td>${actualData.open[i].toFixed(2)}</td>
+                        <td>${actualData.high[i].toFixed(2)}</td>
+                        <td>${actualData.low[i].toFixed(2)}</td>
+                        <td>${actualData.close[i].toFixed(2)}</td>
+                        <td>${actualData.volume ? actualData.volume[i].toLocaleString() : 'N/A'}</td>
+                    </tr>`;
+                }
+                html += '</tbody></table>';
+                html += `<p style="margin-top: 10px; color: #666;">Total candles: ${actualData.open.length}</p>`;
+            }
+            
+            html += '<h3 style="margin-top: 20px;">Full JSON Response</h3>';
+            html += `<div class="json-view">${JSON.stringify(data, null, 2)}</div>`;
+            
+            document.getElementById('resultContent').innerHTML = html;
+        }
+        
+        async function fetchHistoricalData() {
+            const instrumentType = document.getElementById('instrumentType').value;
+            
+            // Check if user is trying to fetch historical data for indices
+            if (instrumentType === 'FUTIDX' || instrumentType === 'OPTIDX') {
+                showWarning('Indices (FUTIDX/OPTIDX) do not have daily historical data. Please use "Fetch Intraday Data" button instead for minute-level data during trading hours.');
+                return;
+            }
+            
+            hideWarning();
+            showLoading();
+            
+            const securityId = document.getElementById('securityId').value;
+            const exchangeSegment = document.getElementById('exchangeSegment').value;
+            const fromDate = document.getElementById('fromDate').value;
+            const toDate = document.getElementById('toDate').value;
+            
+            // Use demo endpoint (no authentication required)
+            const url = `/api/v2/dhan/demo/historical-data?security_id=${securityId}&exchange_segment=${exchangeSegment}&instrument_type=${instrumentType}&from_date=${fromDate}&to_date=${toDate}`;
+            
+            try {
+                const response = await fetch(url);
+                const data = await response.json();
+                
+                if (data.status === 'error') {
+                    let errorMessage = data.message || 'Failed to fetch data';
+                    
+                    // Show common stocks if it's a security ID error
+                    if (data.common_stocks) {
+                        errorMessage += '<br><br><strong>📋 Common NSE Security IDs:</strong><br>';
+                        for (const [stock, id] of Object.entries(data.common_stocks)) {
+                            errorMessage += `${id}: ${stock}<br>`;
+                        }
+                        errorMessage += '<br><em>💡 Select from the dropdown above or enter a valid ID.</em>';
+                    }
+                    
+                    showError(errorMessage);
+                } else if (response.ok) {
+                    showSuccess(data);
+                } else {
+                    showError(data.detail || 'Failed to fetch data');
+                }
+            } catch (error) {
+                showError('Network error: ' + error.message);
+            }
+        }
+        
+        async function fetchIntradayData() {
+            hideWarning();
+            
+            // Adjust date range to 5 days for intraday data
+            adjustDateRangeForIntraday();
+            
+            const securityId = document.getElementById('securityId').value;
+            const exchangeSegment = document.getElementById('exchangeSegment').value;
+            const instrumentType = document.getElementById('instrumentType').value;
+            const fromDate = document.getElementById('fromDate').value + ' 09:15:00';
+            const toDate = document.getElementById('toDate').value + ' 15:30:00';
+            
+            // Validate date range (90-day limit for intraday)
+            const baseFromDate = document.getElementById('fromDate').value;
+            const baseToDate = document.getElementById('toDate').value;
+            
+            if (!validateIntradayDateRange(baseFromDate, baseToDate)) {
+                showError('DHAN API limits intraday data to 90 days at a time. Please select a shorter date range.');
+                return;
+            }
+            
+            showLoading();
+            
+            // Use demo endpoint (no authentication required)
+            const url = `/api/v2/dhan/demo/intraday-data?security_id=${securityId}&exchange_segment=${exchangeSegment}&instrument_type=${instrumentType}&from_date=${encodeURIComponent(fromDate)}&to_date=${encodeURIComponent(toDate)}`;
+            
+            try {
+                const response = await fetch(url);
+                const data = await response.json();
+                
+                if (data.status === 'error') {
+                    let errorMessage = data.message || 'Failed to fetch data';
+                    
+                    // Check for specific DHAN API errors
+                    if (errorMessage.includes('90 days at a time')) {
+                        errorMessage += '<br><br><strong>Solution:</strong> Select a shorter date range (maximum 90 days) or use smaller time windows.';
+                    } else if (data.common_stocks) {
+                        // Show common stocks if it's a security ID error
+                        errorMessage += '<br><br><strong>📋 Common NSE Security IDs:</strong><br>';
+                        for (const [stock, id] of Object.entries(data.common_stocks)) {
+                            errorMessage += `${id}: ${stock}<br>`;
+                        }
+                        errorMessage += '<br><em>💡 Select from the dropdown above or enter a valid ID.</em>';
+                    }
+                    
+                    showError(errorMessage);
+                } else if (response.ok) {
+                    showSuccess(data);
+                } else {
+                    showError(data.detail || 'Failed to fetch data');
+                }
+            } catch (error) {
+                showError('Network error: ' + error.message);
+            }
+        }
+        
+        async function fetchSelectedNifty50Stocks() {
+            hideWarning();
+            
+            // Get selected stocks
+            const selectedCheckboxes = document.querySelectorAll('.stock-checkbox:checked');
+            
+            if (selectedCheckboxes.length === 0) {
+                showError('Please select at least one stock');
+                return;
+            }
+            
+            const fromDate = document.getElementById('n50FromDate').value;
+            const toDate = document.getElementById('n50ToDate').value;
+            
+            if (!fromDate || !toDate) {
+                showError('Please select both from and to dates');
+                return;
+            }
+            
+            showLoading();
+            document.getElementById('resultTitle').textContent = `Fetching ${selectedCheckboxes.length} stocks...`;
+            
+            const results = {};
+            let successCount = 0;
+            let errorCount = 0;
+            let totalCandles = 0;
+            
+            // Fetch stocks one by one
+            for (let i = 0; i < selectedCheckboxes.length; i++) {
+                const checkbox = selectedCheckboxes[i];
+                const stockName = checkbox.value;
+                const securityId = checkbox.dataset.id;
+                const symbol = checkbox.dataset.symbol;
+                
+                // Update loading message
+                document.getElementById('resultContent').innerHTML = `
+                    <div class="loading">
+                        <div class="spinner"></div>
+                        Fetching ${i + 1} of ${selectedCheckboxes.length}: ${stockName}...
+                    </div>
+                `;
+                
+                try {
+                    const url = `/api/v2/dhan/demo/historical-data?security_id=${securityId}&exchange_segment=NSE_EQ&instrument_type=EQUITY&from_date=${fromDate}&to_date=${toDate}`;
+                    const response = await fetch(url);
+                    const data = await response.json();
+                    
+                    if (data.status === 'success' || (data.data && data.data.open)) {
+                        const candleCount = data.data.open ? data.data.open.length : 0;
+                        results[stockName] = {
+                            status: 'success',
+                            symbol: symbol,
+                            security_id: securityId,
+                            candle_count: candleCount,
+                            data: data.data
+                        };
+                        successCount++;
+                        totalCandles += candleCount;
+                    } else {
+                        results[stockName] = {
+                            status: 'error',
+                            symbol: symbol,
+                            security_id: securityId,
+                            message: data.message || 'No data available'
+                        };
+                        errorCount++;
+                    }
+                } catch (error) {
+                    results[stockName] = {
+                        status: 'error',
+                        symbol: symbol,
+                        security_id: securityId,
+                        message: error.message
+                    };
+                    errorCount++;
+                }
+                
+                // Small delay to avoid rate limits
+                if (i < selectedCheckboxes.length - 1) {
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                }
+            }
+            
+            // Display results
+            displayNifty50Results(results, successCount, errorCount, totalCandles, fromDate, toDate);
+        }
+        
+        function displayNifty50Results(results, successCount, errorCount, totalCandles, fromDate, toDate) {
+            document.getElementById('statusBadge').textContent = 'Completed';
+            document.getElementById('statusBadge').className = 'status-badge status-success';
+            document.getElementById('resultTitle').textContent = 'NIFTY 50 Stocks Results';
+            
+            let html = `
+                <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+                    <h3 style="margin: 0 0 15px 0;">📊 Fetch Summary</h3>
+                    <div class="grid">
+                        <div style="text-align: center;">
+                            <div style="font-size: 32px; font-weight: 700;">${Object.keys(results).length}</div>
+                            <div style="font-size: 14px; opacity: 0.9;">Total Stocks</div>
+                        </div>
+                        <div style="text-align: center;">
+                            <div style="font-size: 32px; font-weight: 700;">${successCount}</div>
+                            <div style="font-size: 14px; opacity: 0.9;">Successful</div>
+                        </div>
+                        <div style="text-align: center;">
+                            <div style="font-size: 32px; font-weight: 700;">${errorCount}</div>
+                            <div style="font-size: 14px; opacity: 0.9;">Failed</div>
+                        </div>
+                        <div style="text-align: center;">
+                            <div style="font-size: 32px; font-weight: 700;">${totalCandles.toLocaleString()}</div>
+                            <div style="font-size: 14px; opacity: 0.9;">Total Candles</div>
+                        </div>
+                    </div>
+                    <div style="margin-top: 15px; text-align: center; font-size: 14px;">
+                        Date Range: ${fromDate} to ${toDate}
+                    </div>
+                </div>
+            `;
+            
+            // Successful stocks
+            const successfulStocks = Object.entries(results).filter(([_, data]) => data.status === 'success');
+            if (successfulStocks.length > 0) {
+                html += '<h3 style="color: #155724; margin-top: 20px;">✅ Successfully Fetched</h3>';
+                html += '<div class="grid" style="margin-top: 10px;">';
+                
+                for (const [stockName, stockData] of successfulStocks) {
+                    html += `
+                        <div style="background: white; border: 1px solid #d4edda; border-left: 4px solid #28a745; padding: 15px; border-radius: 5px;">
+                            <div style="font-weight: 600; color: #333; margin-bottom: 8px;">${stockName}</div>
+                            <div style="font-size: 13px; color: #666;">
+                                <div><strong>Symbol:</strong> ${stockData.symbol}</div>
+                                <div><strong>Security ID:</strong> ${stockData.security_id}</div>
+                                <div><strong>Candles:</strong> ${stockData.candle_count.toLocaleString()}</div>
+                            </div>
+                        </div>
+                    `;
+                }
+                
+                html += '</div>';
+            }
+            
+            // Failed stocks
+            const failedStocks = Object.entries(results).filter(([_, data]) => data.status === 'error');
+            if (failedStocks.length > 0) {
+                html += '<h3 style="color: #721c24; margin-top: 20px;">❌ Failed/No Data</h3>';
+                html += '<div class="grid" style="margin-top: 10px;">';
+                
+                for (const [stockName, stockData] of failedStocks) {
+                    html += `
+                        <div style="background: white; border: 1px solid #f8d7da; border-left: 4px solid #dc3545; padding: 15px; border-radius: 5px;">
+                            <div style="font-weight: 600; color: #333; margin-bottom: 8px;">${stockName}</div>
+                            <div style="font-size: 13px; color: #721c24;">
+                                ${stockData.message}
+                            </div>
+                        </div>
+                    `;
+                }
+                
+                html += '</div>';
+            }
+            
+            // Raw JSON
+            html += `
+                <details style="margin-top: 20px;">
+                    <summary style="cursor: pointer; font-weight: 600; padding: 10px; background: #f8f9fa; border-radius: 5px;">
+                        📄 View Raw JSON Response
+                    </summary>
+                    <div class="json-view">${JSON.stringify(results, null, 2)}</div>
+                </details>
+            `;
+            
+            document.getElementById('resultContent').innerHTML = html;
+        }
+        
+    </script>
+</body>
+</html>
