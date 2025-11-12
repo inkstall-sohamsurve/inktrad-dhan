@@ -7,6 +7,7 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, status
+from fastapi.websockets import WebSocketState
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -14,6 +15,7 @@ from app.core.config import settings
 from app.db.database import Database
 from app.api.v1 import auth_router, dhan_router, watchlist_router, live_feed_router
 from app.services.websocket_manager import connection_manager, dhan_ws_manager
+from app.services.options_chain_service import OptionsChainService
 
 # Configure logging
 logging.basicConfig(
@@ -150,6 +152,15 @@ async def live_feed_page():
     return {"error": "Live feed page not found"}
 
 
+@app.get("/options-chain", tags=["Testing"])
+async def options_chain_page():
+    """Serve the live options chain page (NIFTY / BANKNIFTY)."""
+    html_path = Path(__file__).parent / "static" / "options_chain.html"
+    if html_path.exists():
+        return FileResponse(html_path)
+    return {"error": "Options chain page not found"}
+
+
 @app.get("/health", tags=["Health"])
 async def health_check():
     """Health check endpoint."""
@@ -213,7 +224,8 @@ async def get_features():
             "live_feed": {
                 "endpoints": [
                     "/api/v2/live-feed/nifty50",
-                    "/api/v2/ws/live-feed"
+                    "/api/v2/ws/live-feed",
+                    "/api/v2/ws/options-chain"
                 ],
                 "description": "Real-time market data via WebSocket",
                 "type": "WebSocket"
@@ -318,6 +330,62 @@ async def websocket_live_feed(websocket: WebSocket):
                     logger.info("WebSocket connection closed from server-side")
             except Exception as e:
                 logger.debug(f"Error closing WebSocket: {e}")
+
+
+@app.websocket("/api/v2/ws/options-chain")
+async def websocket_options_chain(websocket: WebSocket):
+    """WebSocket endpoint for live options chain snapshots."""
+    service: OptionsChainService | None = None
+    try:
+        await connection_manager.connect(websocket)
+        # Expect an initial config message
+        cfg = None
+        try:
+            raw = await asyncio.wait_for(websocket.receive_text(), timeout=15.0)
+            import json
+            msg = json.loads(raw)
+            if isinstance(msg, dict) and msg.get("action") in ("start", "subscribe"):
+                index = (msg.get("index") or "NIFTY").upper()
+                if index not in ("NIFTY", "BANKNIFTY"):
+                    index = "NIFTY"
+                strikes = int(msg.get("strikesEachSide") or 10)
+                async def send_cb(payload):
+                    # Send only if still connected
+                    if websocket.client_state == WebSocketState.CONNECTED:
+                        await websocket.send_json(payload)
+                service = OptionsChainService(index=index, strikes_each_side=strikes, send_callback=send_cb)
+                await service.start()
+                await websocket.send_json({"type": "connection", "status": "started", "index": index, "strikesEachSide": strikes})
+            else:
+                await websocket.send_json({"type": "error", "message": "Send {action:'start', index:'NIFTY|BANKNIFTY', strikesEachSide:10}"})
+        except asyncio.TimeoutError:
+            await websocket.send_json({"type": "error", "message": "No config received. Send {action:'start', ...}"})
+        # Keep the connection alive and process simple control messages
+        while True:
+            try:
+                raw = await asyncio.wait_for(websocket.receive_text(), timeout=30.0)
+                import json
+                msg = json.loads(raw)
+                if msg.get("action") == "stop":
+                    break
+                if msg.get("action") == "ping":
+                    await websocket.send_json({"type": "pong", "ts": datetime.now().isoformat()})
+            except asyncio.TimeoutError:
+                # periodic keep-alive
+                if websocket.client_state != WebSocketState.CONNECTED:
+                    break
+                await websocket.send_json({"type": "ping"})
+            except WebSocketDisconnect:
+                break
+    except Exception as e:
+        logger.error(f"Options chain WS error: {e}")
+    finally:
+        try:
+            if service:
+                await service.stop()
+        except Exception:
+            pass
+        connection_manager.disconnect(websocket)
 
 
 @app.exception_handler(Exception)

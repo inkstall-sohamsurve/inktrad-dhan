@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Live Options Chain - NIFTY & BANKNIFTY</title>
+  <style>
+    :root {
+      --bg: #f6f8fa;
+      --panel: #ffffff;
+      --muted: #5b6b7b;
+      --text: #0f172a;
+      --green: #22863a;
+      --red: #cb2431;
+      --yellow: #b08800;
+      --border: #e5e7eb;
+      --accent: #2563eb;
+      --thead: #f1f5f9;
+      --thead2: #e2e8f0;
+      --row-alt: #fafbfc;
+      --maxoi: #fff7ed;
+      --atm: #e0ecff;
+    }
+    html, body { height: 100%; }
+    body {
+      margin: 0; background: var(--bg); color: var(--text); font: 14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+    }
+    .container { max-width: 1200px; margin: 0 auto; padding: 16px; }
+    .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
+    .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+    .row + .row { margin-top: 12px; }
+    label { color: var(--muted); font-size: 13px; }
+    select, input[type="number"] {
+      background: #fff; color: var(--text); border: 1px solid var(--border);
+      padding: 8px 10px; border-radius: 8px; outline: none;
+    }
+    button {
+      background: var(--accent); border: none; color: white; padding: 10px 14px; border-radius: 10px; cursor: pointer;
+    }
+    button.secondary { background: #64748b; }
+    .muted { color: var(--muted); }
+    .stats { display: flex; gap: 16px; flex-wrap: wrap; }
+    .stat { background: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; }
+    .table-wrap { overflow: auto; border: 1px solid var(--border); border-radius: 12px; margin-top: 12px; }
+    table { width: 100%; border-collapse: separate; border-spacing: 0; min-width: 980px; }
+    thead tr.group th { position: sticky; top: 0; background: var(--thead); border-bottom: 1px solid var(--border); padding: 8px; text-align: center; font-weight: 700; color: #475569; }
+    thead tr.cols th { position: sticky; top: 34px; background: var(--thead2); border-bottom: 1px solid var(--border); padding: 8px; text-align: right; font-weight: 600; color: #64748b; }
+    thead tr.cols th.first { text-align: right; }
+    thead tr.cols th.strike { text-align: center; }
+    tbody td { padding: 8px; border-bottom: 1px solid var(--border); text-align: right; }
+    tbody td.strike { text-align: center; font-weight: 600; color: #334155; }
+    tbody tr.atm { background: var(--atm); }
+    tbody td.maxoi { background: var(--maxoi); font-weight: 700; }
+    .pos { color: var(--green); font-weight: 600; }
+    .neg { color: var(--red); font-weight: 600; }
+    .footer { margin-top: 10px; font-size: 12px; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2 style="margin:8px 0 14px 0;">Live Options Chain <span class="muted">(NSE_FNO / OPTIDX)</span></h2>
+
+    <div class="card">
+      <div class="row">
+        <div>
+          <label>Index</label><br/>
+          <select id="index">
+            <option value="NIFTY">NIFTY</option>
+            <option value="BANKNIFTY">BANKNIFTY</option>
+          </select>
+        </div>
+        <div>
+          <label>Strikes each side</label><br/>
+          <input id="strikes" type="number" min="3" max="20" value="10" />
+        </div>
+        <div style="margin-top:18px; display:flex; gap:8px;">
+          <button id="startBtn">Start</button>
+          <button class="secondary" id="stopBtn">Stop</button>
+        </div>
+      </div>
+
+      <div class="row">
+        <div class="stats">
+          <div class="stat">Index: <b id="statIndex">-</b></div>
+          <div class="stat">Spot: <b id="statSpot">-</b></div>
+          <div class="stat">Expiry: <b id="statExpiry">-</b></div>
+          <div class="stat">Updated: <b id="statUpdated">-</b></div>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table id="chainTable">
+          <thead>
+            <tr class="group">
+              <th colspan="5">CALLS</th>
+              <th class="strike">STRIKE</th>
+              <th colspan="5">PUTS</th>
+            </tr>
+            <tr class="cols">
+              <th class="first">OI</th>
+              <th>Chg OI</th>
+              <th>Vol</th>
+              <th>LTP</th>
+              <th>Chg</th>
+              <th class="strike">Strike</th>
+              <th>Chg</th>
+              <th>LTP</th>
+              <th>Vol</th>
+              <th>Chg OI</th>
+              <th>OI</th>
+            </tr>
+          </thead>
+          <tbody id="chainBody"></tbody>
+        </table>
+      </div>
+      <div class="footer">Note: Change% is based on previous close from feed when available. Best viewed during market hours (09:15–15:30 IST).</div>
+    </div>
+  </div>
+
+  <script>
+    const chainBody = document.getElementById('chainBody');
+    const statIndex = document.getElementById('statIndex');
+    const statSpot = document.getElementById('statSpot');
+    const statExpiry = document.getElementById('statExpiry');
+    const statUpdated = document.getElementById('statUpdated');
+
+    const indexSel = document.getElementById('index');
+    const strikesInp = document.getElementById('strikes');
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
+
+    let ws = null;
+    let currentIdx = 'NIFTY';
+    let stepMap = { NIFTY: 50, BANKNIFTY: 100 };
+
+    function wsUrl() {
+      const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
+      return `${scheme}://${location.host}/api/v2/ws/options-chain`;
+    }
+
+    function formatNum(n) {
+      if (n === null || n === undefined) return '-';
+      return n.toLocaleString('en-IN');
+    }
+
+    function classForChange(val) {
+      if (val > 0.0001) return 'pos';
+      if (val < -0.0001) return 'neg';
+      return '';
+    }
+    function formatSigned(n) {
+      const s = Math.abs(n).toLocaleString('en-IN');
+      if (n > 0) return '+' + s;
+      if (n < 0) return '-' + s;
+      return '0';
+    }
+
+    function renderSnapshot(snap) {
+      statIndex.textContent = snap.index;
+      statSpot.textContent = snap.spot ? snap.spot.toFixed(2) : '-';
+      statExpiry.textContent = snap.expiry || '-';
+      statUpdated.textContent = new Date(snap.ts).toLocaleTimeString();
+
+      const step = stepMap[snap.index] || 50;
+      const atm = snap.spot ? Math.round(snap.spot / step) * step : null;
+
+      // compute Max OI for CE/PE to highlight like NSE
+      let maxCeOi = 0, maxPeOi = 0;
+      for (const r of snap.rows) {
+        if (r.ce && typeof r.ce.oi === 'number') maxCeOi = Math.max(maxCeOi, r.ce.oi);
+        if (r.pe && typeof r.pe.oi === 'number') maxPeOi = Math.max(maxPeOi, r.pe.oi);
+      }
+
+      chainBody.innerHTML = '';
+      for (const row of snap.rows) {
+        const tr = document.createElement('tr');
+        if (atm !== null && row.strike === atm) tr.classList.add('atm');
+
+        const ceChgCls = classForChange(row.ce.chg);
+        const peChgCls = classForChange(row.pe.chg);
+        const ceOiChgCls = classForChange(row.ce.oi_chg);
+        const peOiChgCls = classForChange(row.pe.oi_chg);
+
+        const ceOiClass = (row.ce.oi === maxCeOi && maxCeOi > 0) ? 'maxoi' : '';
+        const peOiClass = (row.pe.oi === maxPeOi && maxPeOi > 0) ? 'maxoi' : '';
+
+        tr.innerHTML = `
+          <td class="${ceOiClass}">${formatNum(row.ce.oi)}</td>
+          <td class="${ceOiChgCls}">${formatSigned(row.ce.oi_chg)}</td>
+          <td>${formatNum(row.ce.vol)}</td>
+          <td>${row.ce.ltp.toFixed(2)}</td>
+          <td class="${ceChgCls}">${row.ce.chg.toFixed(2)}</td>
+          <td class="strike">${row.strike}</td>
+          <td class="${peChgCls}">${row.pe.chg.toFixed(2)}</td>
+          <td>${row.pe.ltp.toFixed(2)}</td>
+          <td>${formatNum(row.pe.vol)}</td>
+          <td class="${peOiChgCls}">${formatSigned(row.pe.oi_chg)}</td>
+          <td class="${peOiClass}">${formatNum(row.pe.oi)}</td>
+        `;
+        chainBody.appendChild(tr);
+      }
+    }
+
+    function connectAndStart() {
+      const idx = (indexSel.value || 'NIFTY').toUpperCase();
+      const strikes = Math.max(3, Math.min(20, parseInt(strikesInp.value || '10', 10)));
+      currentIdx = idx;
+
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        try { ws.close(); } catch {}
+      }
+
+      ws = new WebSocket(wsUrl());
+      ws.onopen = () => {
+        ws.send(JSON.stringify({ action: 'start', index: idx, strikesEachSide: strikes }));
+      };
+      ws.onmessage = (ev) => {
+        try {
+          const msg = JSON.parse(ev.data);
+          if (msg.type === 'connection' && msg.status === 'started') {
+            // ok
+          } else if (msg.type === 'snapshot') {
+            renderSnapshot(msg);
+          }
+        } catch {}
+      };
+      ws.onclose = () => {
+        // optionally auto-retry
+      };
+    }
+
+    function stop() {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        try { ws.send(JSON.stringify({ action: 'stop' })); } catch {}
+        try { ws.close(); } catch {}
+      }
+    }
+
+    startBtn.addEventListener('click', connectAndStart);
+    stopBtn.addEventListener('click', stop);
+
+    // Auto-start on load
+    window.addEventListener('load', () => {
+      connectAndStart();
+    });
+  </script>
+</body>
+</html>
