@@ -643,7 +643,7 @@ async def demo_get_expired_options(request: Dict[str, Any]) -> Dict[str, Any]:
             "Accept": "application/json",
             "Content-Type": "application/json",
             "access-token": settings.DHAN_MASTER_ACCESS_TOKEN,
-            "clientId": settings.DHAN_MASTER_CLIENT_ID
+            "client-id": settings.DHAN_MASTER_CLIENT_ID
         }
         
         response = requests.post(
@@ -782,7 +782,7 @@ async def demo_get_expired_options_multi(request: Dict[str, Any]) -> Dict[str, A
             "Accept": "application/json",
             "Content-Type": "application/json",
             "access-token": settings.DHAN_MASTER_ACCESS_TOKEN,
-            "clientId": settings.DHAN_MASTER_CLIENT_ID
+            "client-id": settings.DHAN_MASTER_CLIENT_ID
         }
         
         # Fetch data for all requested indices

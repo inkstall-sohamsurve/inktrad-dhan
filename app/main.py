@@ -5,8 +5,9 @@ import asyncio
 import json
 import logging
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, status
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, status
 from fastapi.websockets import WebSocketState
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
@@ -98,7 +99,13 @@ app = FastAPI(
 
 # Configure CORS
 # Add "null" origin to support file:// protocol (for direct HTML file access)
-cors_origins = settings.cors_origins_list + ["null"]
+# Add common development ports to support Vite dev server on any port
+cors_origins = settings.cors_origins_list + [
+    "null",
+    "http://localhost:5174",  # Vite alternate port
+    "http://localhost:5175",  # Vite alternate port
+    "http://localhost:5176",  # Vite alternate port
+]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
@@ -175,7 +182,7 @@ async def health_check():
     """Health check endpoint."""
     return {
         "status": "healthy",
-        "database": "connected" if Database.db else "disconnected",
+        "database": "connected" if Database.db is not None else "disconnected",
         "dhan_websocket": "connected" if dhan_ws_manager.is_connected else "disconnected",
         "active_connections": len(connection_manager.active_connections),
         "subscribed_instruments": len(dhan_ws_manager.subscribed_instruments)
@@ -258,99 +265,100 @@ async def get_features():
     }
 
 
-@app.websocket("/api/v2/ws/live-feed")
-async def websocket_live_feed(websocket: WebSocket):
+@app.get("/api/v2/options-chain/live", tags=["Options Chain"])
+async def get_live_options_chain(index: str = "NIFTY", expiry: str = None):
     """
-    WebSocket endpoint for real-time market data feed.
+    Get live options chain data using Dhan API
+    
+    Args:
+        index: Index name (NIFTY or BANKNIFTY)
+        expiry: Expiry date in YYYY-MM-DD format (optional, auto-fetches if not provided)
+    
+    Returns:
+        Live options chain data
     """
-    connection_accepted = False
-
     try:
-        # Accept connection first - this is crucial
-        await connection_manager.connect(websocket)
-        connection_accepted = True
-
-        # Send welcome message
-        await connection_manager.send_message(websocket, {
-            "type": "connection",
-            "status": "connected",
-            "message": "Connected to Inktrad live feed"
-        })
-
-        # Listen for messages from client
-        while True:
-            # Check if websocket is still connected before trying to receive
-            if websocket.client_state != WebSocketState.CONNECTED:
-                logger.info("WebSocket client disconnected - breaking message loop")
-                break
-
-            try:
-                # Receive message with timeout
-                data = await asyncio.wait_for(websocket.receive_text(), timeout=30.0)
-                message = json.loads(data)
-                action = message.get("action")
-
-                if action == "subscribe":
-                    instruments = message.get("instruments", [])
-                    await connection_manager.subscribe(websocket, instruments)
-                    await connection_manager.send_message(websocket, {
-                        "type": "subscription", "status": "success", "action": "subscribed", "instruments": instruments
-                    })
-
-                elif action == "unsubscribe":
-                    instruments = message.get("instruments", [])
-                    await connection_manager.unsubscribe(websocket, instruments)
-                    await connection_manager.send_message(websocket, {
-                        "type": "subscription", "status": "success", "action": "unsubscribed", "instruments": instruments
-                    })
-
-                elif action == "ping":
-                    await connection_manager.send_message(websocket, {
-                        "type": "pong", "timestamp": message.get("timestamp")
-                    })
-
-                else:
-                    await connection_manager.send_message(websocket, {
-                        "type": "error", "message": f"Unknown action: {action}"
-                    })
-
-            except asyncio.TimeoutError:
-                # Send ping to keep connection alive
-                await connection_manager.send_message(websocket, {"type": "ping"})
-
-            except json.JSONDecodeError:
-                await connection_manager.send_message(websocket, {
-                    "type": "error", "message": "Invalid JSON format"
-                })
-
-            except WebSocketDisconnect:
-                logger.info("WebSocket disconnect detected in message loop")
-                break
-
-            except Exception as e:
-                logger.error(f"Error processing WebSocket message: {e}")
-                # Don't break loop for minor errors, but log them
-
+        # Import the OptionsChainLive class
+        import sys
+        import os
+        sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+        
+        # Import the standalone functionality
+        from live_options_chain import OptionsChainLive
+        
+        logger.info(f"📊 Fetching options chain for {index}, expiry: {expiry}")
+        
+        # Initialize the options chain fetcher
+        chain = OptionsChainLive(indices=[index], expiry=expiry)
+        
+        # Initialize Dhan client
+        if not chain.connect():
+            logger.error("Failed to initialize Dhan client")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to initialize Dhan client. Check DHAN credentials."
+            )
+        
+        # Fetch option chain data
+        results = chain.fetch_all_chains()
+        
+        logger.info(f"Results keys: {list(results.keys())}")
+        
+        # Check if we got data
+        if index in results:
+            data = results[index]
+            logger.info(f"Data type: {type(data)}, Has data: {bool(data)}")
+            
+            # Check if data is valid (not empty dict or None)
+            if data and isinstance(data, dict):
+                # Check if it's an error response from DHAN API
+                if data.get('status') == 'failure':
+                    error_msg = data.get('remarks', {}).get('error_message', 'Unknown error')
+                    logger.error(f"DHAN API error: {error_msg}")
+                    return {
+                        "status": "error",
+                        "message": f"DHAN API error: {error_msg}",
+                        "data": {},
+                        "timestamp": datetime.now().isoformat()
+                    }
+                
+                # Return the data as-is from DHAN API
+                return {
+                    "status": "success",
+                    "data": data,
+                    "timestamp": datetime.now().isoformat()
+                }
+            else:
+                logger.warning(f"No data or empty data for {index}")
+                return {
+                    "status": "error",
+                    "message": f"No options chain data available for {index}. Market might be closed or invalid expiry.",
+                    "data": {},
+                    "timestamp": datetime.now().isoformat()
+                }
+        else:
+            logger.error(f"Index {index} not found in results")
+            return {
+                "status": "error",
+                "message": f"Index {index} not found in results",
+                "data": {},
+                "timestamp": datetime.now().isoformat()
+            }
+            
+    except ImportError as e:
+        logger.error(f"Import error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to import options chain module: {str(e)}"
+        )
     except Exception as e:
-        # This catches errors from the initial connect call or any other issues
-        logger.error(f"WebSocket error: {e}")
-
-    finally:
-        # Clean up connection safely
-        logger.info("Cleaning up WebSocket connection...")
-
-        # Only try to disconnect if we actually accepted the connection
-        if connection_accepted:
-            connection_manager.disconnect(websocket)
-
-            # Ensure the connection is closed from server-side
-            try:
-                if websocket.client_state == WebSocketState.CONNECTED:
-                    await websocket.close()
-                    logger.info("WebSocket connection closed from server-side")
-            except Exception as e:
-                logger.debug(f"Error closing WebSocket: {e}")
-
+        logger.error(f"Unexpected error: {e}", exc_info=True)
+        return {
+            "status": "error",
+            "message": f"Error fetching options chain: {str(e)}",
+            "data": {},
+            "timestamp": datetime.now().isoformat()
+        }
 
 @app.websocket("/api/v2/ws/options-chain")
 async def websocket_options_chain(websocket: WebSocket):

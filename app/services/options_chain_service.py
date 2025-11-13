@@ -24,12 +24,18 @@ RESPONSE_FULL = 8
 RESPONSE_PREV_CLOSE = 6
 RESPONSE_OI = 5
 
-SCRIP_MASTER_URL = "https://images.dhan.co/api-data/api-scrip-master.csv"
-SCRIP_CACHE = os.path.join(os.getcwd(), "dhan_scrip_master.csv")
-
+# Index configurations for Dhan option chain API
 INDEX_UNDERLYING = {
-    "NIFTY": {"security_id": "26000", "step": 50},
-    "BANKNIFTY": {"security_id": "26009", "step": 100},
+    "NIFTY": {
+        "security_id": "13",  # Nifty
+        "step": 50,
+        "exchange_segment": "IDX_I"
+    },
+    "BANKNIFTY": {
+        "security_id": "23",  # BankNifty
+        "step": 100,
+        "exchange_segment": "IDX_I"
+    }
 }
 
 
@@ -124,50 +130,20 @@ def _is_optidx(instr_val: str, opt_type: str) -> bool:
         )
     return False
 
-
-def load_scrip_master(path: str = SCRIP_CACHE) -> List[Dict]:
-    def download(url: str, target: str) -> bool:
-        try:
-            print(f"🔍 Downloading scrip master...")
-            r = requests.get(url, timeout=25)
-            print(f"📡 Response status: {r.status_code}")
-            if r.status_code != 200:
-                print(f"❌ Error response: {r.text}")
-                return False
-            if r.text:
-                with open(target, "w", encoding="utf-8", newline="") as f:
-                    f.write(r.text)
-                return True
-            print("❌ Empty response body")
-            return False
-        except Exception as e:
-            print(f"❌ Download error: {e}")
-            return False
-
-    # Always download fresh copy
-    ok = download(SCRIP_MASTER_URL, path)
-    if not ok:
-        raise RuntimeError(
-            "Failed to download DHAN scrip master. Please check your DHAN credentials."
-        )
-
-    rows: List[Dict] = []
-    with open(path, "r", encoding="utf-8", newline="") as f:
-        reader = csv.DictReader(f)
-        for r in reader:
-            rows.append({k.strip(): v.strip() for k, v in r.items()})
-    return rows
-
-
 def nearest_expiry(master: List[Dict], idx: str, today: date) -> Optional[str]:
     out = []
     for r in master[:500000]:
         m = normalize_header_map(r)
-        exch = _get_field(r, m, ["exchangesegment", "segment", "exchange", "exchgsegment"]) 
+        exch = _get_field(r, m, ["exchangesegment", "exchange", "exchgsegment"]) 
+        seg = _get_field(r, m, ["segment"]) 
         instr = _get_field(r, m, ["instrument", "instrumenttype", "instrumentname"]) 
         sym = _get_field(r, m, ["symbolname", "tradingsymbol", "symbol"]) 
         exp = _get_field(r, m, ["expirydate", "expiry", "expdate"]) 
-        if not (_is_fno_segment(exch) and _is_optidx(instr)):
+        opt = _get_field(r, m, ["optiontype", "opttype", "option"]) 
+        if not _is_fno_segment(exch, seg):
+            continue
+        uinstr = (instr or "").upper()
+        if not ("OPT" in uinstr and ("IDX" in uinstr or "INDEX" in uinstr)):
             continue
         flags = _is_symbol_for_index(sym)
         if not flags.get(idx, False):
@@ -188,14 +164,20 @@ def find_option_contracts(master: List[Dict], idx: str, expiry: Optional[str], s
     result: Dict[Tuple[int, str], Contract] = {}
     for r in master:
         m = normalize_header_map(r)
-        exch = _get_field(r, m, ["exchangesegment", "segment", "exchange", "exchgsegment"]) 
+        exch = _get_field(r, m, ["exchangesgment", "exchangesegment", "exchange", "exchgsegment"]) 
+        seg = _get_field(r, m, ["segment"]) 
         instr = _get_field(r, m, ["instrument", "instrumenttype", "instrumentname"]) 
         sym = _get_field(r, m, ["symbolname", "tradingsymbol", "symbol"]) 
         secid = _get_field(r, m, ["securityid", "security_id", "token"]) 
         opttype = _get_field(r, m, ["optiontype", "opttype", "option"]) 
         strike_val = _get_field(r, m, ["strikeprice", "strike", "strike_price"]) 
         exp = _get_field(r, m, ["expirydate", "expiry", "expdate"]) 
-        if not (_is_fno_segment(exch) and _is_optidx(instr)) or not secid or not strike_val or not opttype:
+        if not _is_fno_segment(exch, seg):
+            continue
+        uinstr = (instr or "").upper()
+        if not ("OPT" in uinstr and ("IDX" in uinstr or "INDEX" in uinstr)):
+            continue
+        if not secid or not strike_val or not opttype:
             continue
         flags = _is_symbol_for_index(sym)
         if not flags.get(idx, False):
@@ -213,7 +195,11 @@ def find_option_contracts(master: List[Dict], idx: str, expiry: Optional[str], s
             continue
         if st not in strikes:
             continue
-        cp = opttype.upper()
+        cp = (opttype or "").upper()
+        if cp in ("C", "CALL"):
+            cp = "CE"
+        elif cp in ("P", "PUT"):
+            cp = "PE"
         if cp not in ("CE", "PE"):
             continue
         key = (st, cp)
@@ -293,27 +279,67 @@ class OptionsChainService:
         await self._subscribe([{"ExchangeSegment": "NSE_FNO", "SecurityId": sec}], SUBSCRIBE_TICKER)
 
     async def _build_and_subscribe_chain(self):
-        master = load_scrip_master()
         today = date.today()
-        # Determine expiry and ATM
-        self.selected_expiry = nearest_expiry(master, self.index, today)
-        # Wait up to 3s for an underlying tick to compute ATM
-        spot = 0.0
-        for _ in range(12):
-            if self.index in self.underlying_ltp and self.underlying_ltp[self.index] > 0:
-                spot = self.underlying_ltp[self.index]
-                break
-            await asyncio.sleep(0.25)
-        step = INDEX_UNDERLYING[self.index]["step"]
-        atm = int(round(spot / step) * step) if spot > 0 else (22500 if self.index == "NIFTY" else 50000)
-        strikes = [atm + i * step for i in range(-self.strikes_each_side, self.strikes_each_side + 1)]
-        # Find contracts and subscribe
-        contracts = find_option_contracts(master, self.index, self.selected_expiry, strikes)
-        for c in contracts:
-            self.contracts[c.sec_id] = c
-        inst = [{"ExchangeSegment": "NSE_FNO", "SecurityId": sid} for sid in self.contracts.keys()]
-        if inst:
-            await self._subscribe(inst, SUBSCRIBE_QUOTE)
+        
+        if not self.is_connected:
+            if not await self.connect():
+                print("❌ Failed to connect to WebSocket")
+                return
+
+        try:
+            # Initialize Dhan client
+            dhan = dhanhq(self.client_id, self.access_token)
+            
+            for idx in ("NIFTY", "BANKNIFTY"):
+                # Get expiry
+                expiry_date = today + timedelta(days=(3 - today.weekday() + 7))
+                exp = expiry_date.isoformat()
+                self.expiries[idx] = exp
+                
+                if idx not in self.snapshots:
+                    self.snapshots[idx] = {}
+                
+                # Get spot price
+                spot = await self._get_spot(idx)
+                
+                # Get option chain from Dhan API
+                chain = dhan.option_chain(
+                    under_security_id=INDEX_UNDERLYING[idx]["security_id"],
+                    under_exchange_segment=INDEX_UNDERLYING[idx]["exchange_segment"],
+                    expiry=exp
+                )
+                
+                if not chain or "data" not in chain:
+                    print(f"❌ Failed to get {idx} option chain: {chain}")
+                    continue
+                    
+                # Parse contracts
+                for opt in chain["data"]:
+                    try:
+                        contract = Contract(
+                            sec_id=str(opt["security_id"]),
+                            index=idx,
+                            strike=float(opt["strike_price"]),
+                            option_type=opt["option_type"],
+                            expiry=exp
+                        )
+                        self.contracts[contract.sec_id] = contract
+                    except (KeyError, ValueError) as e:
+                        print(f"⚠️ Error parsing option: {e}")
+                        continue
+            
+            # Subscribe to all contracts
+            inst = []
+            for c in self.contracts.values():
+                inst.append({"ExchangeSegment": "NSE_FNO", "SecurityId": c.sec_id})
+            for idx in self.indices:
+                inst.append({"ExchangeSegment": "NSE_FNO", "SecurityId": INDEX_UNDERLYING[idx]["security_id"]})
+            
+            if not await self.subscribe(inst, SUBSCRIBE_QUOTE):
+                return
+                
+        except Exception as e:
+            print(f"❌ Error building option chain: {e}")
 
     async def _listen(self):
         try:
