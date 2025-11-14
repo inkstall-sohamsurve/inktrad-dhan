@@ -14,7 +14,6 @@ from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from app.core.config import settings
 from app.db.database import Database
-from app.api.v1 import auth_router, dhan_router, watchlist_router, margin_router
 from app.api.v1 import auth_router, dhan_router, watchlist_router, live_feed_router
 from app.services.websocket_manager import connection_manager, dhan_ws_manager
 from app.services.options_chain_service import OptionsChainService
@@ -124,7 +123,6 @@ if static_path.exists():
 app.include_router(auth_router.router)
 app.include_router(dhan_router.router)
 app.include_router(watchlist_router.router)
-app.include_router(margin_router.router)
 app.include_router(live_feed_router.router)
 
 
@@ -138,7 +136,6 @@ async def root():
         "docs": "/docs",
         "test_pages": {
             "historical_data": "/test-historical",
-            "test_margin_calculator": "/test-margin",
             "live_market_data": "/test-live-market"
         }
     }
@@ -150,14 +147,6 @@ async def test_historical_page():
     if html_path.exists():
         return FileResponse(html_path)
     return {"error": "Test page not found"}
-
-@app.get("/test-margin", tags=["Testing"])
-async def test_margin_page():
-    """Serve the margin calculator test page."""
-    html_path = Path(__file__).parent / "static" / "test_margin_calculator.html"
-    if html_path.exists():
-        return FileResponse(html_path)
-    return {"error": "Margin calculator test page not found"}
 
 
 @app.get("/live-feed", tags=["Testing"])
@@ -236,17 +225,6 @@ async def get_features():
                     "/api/v2/watchlist/{watchlist_id}"
                 ],
                 "description": "Manage watchlists"
-            },
-            "margin_calculation": {
-                "endpoints": [
-                    "/api/v1/margin/calculate",
-                    "/api/v1/margin/validate",
-                    "/api/v1/margin/stock/{security_id}",
-                    "/api/v1/margin/mtf/interest",
-                    "/api/v1/margin/portfolio/summary"
-                ],
-                "description": "Margin calculations and validations for trading",
-                "status": "✅ Available"
             },
             "live_feed": {
                 "endpoints": [
