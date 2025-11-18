@@ -64,9 +64,34 @@ class DhanService:
     async def get_funds(user: UserInDB) -> Dict[str, Any]:
         """Get user's available funds and margin."""
         try:
-            dhan = DhanService.get_dhan_client(user)
-            response = dhan.get_fund_limits()
-            return response
+            import http.client
+            import json
+            
+            # Get decrypted access token
+            access_token = decrypt_data(user.dhan_access_token)
+            
+            conn = http.client.HTTPSConnection("api.dhan.co")
+            headers = {
+                'access-token': access_token,
+                'Accept': 'application/json'
+            }
+            
+            conn.request("GET", "/fundlimit", headers=headers)
+            res = conn.getresponse()
+            data = json.loads(res.read().decode("utf-8"))
+            
+            # Transform response to match our schema
+            return {
+                'dhan_client_id': data.get('dhanClientId'),
+                'available_balance': data.get('availabelBalance', 0),
+                'sod_limit': data.get('sodLimit', 0),
+                'collateral_amount': data.get('collateralAmount', 0),
+                'receiveable_amount': data.get('receiveableAmount', 0),
+                'utilized_amount': data.get('utilizedAmount', 0),
+                'blocked_payout_amount': data.get('blockedPayoutAmount', 0),
+                'withdrawable_balance': data.get('withdrawableBalance', 0)
+            }
+            
         except Exception as e:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

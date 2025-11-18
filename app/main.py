@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from app.core.config import settings
 from app.db.database import Database
-from app.api.v1 import auth_router, dhan_router, watchlist_router, live_feed_router
+from app.api.v1 import auth_router, dhan_router, watchlist_router, live_feed_router, trade_router
 from app.services.websocket_manager import connection_manager, dhan_ws_manager
 from app.services.options_chain_service import OptionsChainService
 
@@ -124,7 +124,7 @@ app.include_router(auth_router.router)
 app.include_router(dhan_router.router)
 app.include_router(watchlist_router.router)
 app.include_router(live_feed_router.router)
-
+app.include_router(trade_router.router)
 
 @app.get("/", tags=["Root"])
 async def root():

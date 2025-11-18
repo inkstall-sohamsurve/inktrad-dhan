@@ -57,6 +57,12 @@ class Database:
         await orders_collection.create_index("user_id")
         await orders_collection.create_index("dhan_order_id")
         await orders_collection.create_index([("user_id", 1), ("timestamp", -1)])
+
+        # Trades collection indexes (used by trading dashboard)
+        trades_collection = cls.get_collection("trades")
+        await trades_collection.create_index("user_id")
+        await trades_collection.create_index("trade_id", unique=True)
+        await trades_collection.create_index([("user_id", 1), ("entry_time", -1)])
         
         # Watchlists collection indexes
         watchlists_collection = cls.get_collection("watchlists")
@@ -92,6 +98,11 @@ class Database:
     def get_orders_log_collection(cls) -> AsyncIOMotorCollection:
         """Get the orders_log collection."""
         return cls.get_collection("orders_log")
+
+    @classmethod
+    def get_trades_collection(cls) -> AsyncIOMotorCollection:
+        """Get the trades collection used for storing executed trades."""
+        return cls.get_collection("trades")
 
 
 # Convenience function to get database instance
