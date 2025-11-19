@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <title>Inktrad Auto Trade Test</title>
+    <style>
+        body { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 24px; background: #0b1020; color: #e5e7eb; }
+        h1 { margin-bottom: 4px; }
+        h2 { margin-top: 32px; margin-bottom: 8px; }
+        label { display: block; margin-top: 12px; margin-bottom: 4px; font-size: 14px; }
+        input, select { padding: 6px 8px; border-radius: 4px; border: 1px solid #4b5563; background: #020617; color: #e5e7eb; width: 240px; }
+        button { margin-top: 16px; padding: 8px 16px; border-radius: 4px; border: none; background: #2563eb; color: white; cursor: pointer; font-weight: 500; }
+        button:disabled { opacity: 0.5; cursor: default; }
+        .row { display: flex; flex-wrap: wrap; gap: 32px; margin-top: 24px; }
+        .card { flex: 1 1 320px; border-radius: 8px; border: 1px solid #1f2937; padding: 16px; background: #020617; }
+        pre { white-space: pre-wrap; word-wrap: break-word; font-size: 12px; max-height: 420px; overflow: auto; background: #020617; padding: 8px; border-radius: 4px; border: 1px solid #111827; }
+        .pill { display: inline-flex; align-items: center; border-radius: 999px; padding: 2px 10px; font-size: 12px; margin-right: 8px; }
+        .pill-buy { background: rgba(34,197,94,0.15); color: #4ade80; }
+        .pill-sell { background: rgba(248,113,113,0.15); color: #fca5a5; }
+        .pill-hold { background: rgba(148,163,184,0.15); color: #e5e7eb; }
+        .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; margin-top: 8px; font-size: 13px; }
+        .summary-item { padding: 6px 8px; border-radius: 6px; background: #020617; border: 1px solid #111827; }
+        .summary-label { color: #9ca3af; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+        .summary-value { margin-top: 2px; }
+        .status { margin-top: 8px; font-size: 13px; }
+        .orderbook-grid { display: grid; grid-template-columns: repeat(2, minmax(120px, 1fr)); gap: 8px; margin-top: 8px; font-size: 12px; }
+        .orderbook-col { padding: 6px 8px; border-radius: 6px; background: #020617; border: 1px solid #111827; }
+        .orderbook-title { color: #9ca3af; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 4px; }
+        .orderbook-row { display: flex; justify-content: space-between; margin-top: 2px; }
+        .orderbook-price { color: #e5e7eb; }
+        .orderbook-qty { color: #9ca3af; }
+    </style>
+</head>
+<body>
+    <h1>Auto Trade Test</h1>
+    <p style="margin: 0; color: #9ca3af; font-size: 13px;">Trigger <code>/api/v1/auto/trade</code> and inspect the full prediction + trade response.</p>
+
+    <form id="auto-trade-form" onsubmit="event.preventDefault(); runAutoTrade();">
+        <label for="symbol">Symbol</label>
+        <input id="symbol" name="symbol" value="HDFC Bank" />
+
+        <label for="quantity">Quantity</label>
+        <input id="quantity" name="quantity" type="number" value="1" min="1" />
+
+        <label for="product_type">Product Type</label>
+        <select id="product_type" name="product_type">
+            <option value="MIS" selected>MIS (Intraday)</option>
+            <option value="NRML">NRML</option>
+            <option value="CNC">CNC</option>
+        </select>
+
+        <label for="trade_type">Trade Type</label>
+        <select id="trade_type" name="trade_type">
+            <option value="INTRADAY" selected>INTRADAY</option>
+            <option value="DELIVERY">DELIVERY</option>
+        </select>
+
+        <button id="submit-btn" type="submit">Run Auto Trade</button>
+        <div id="status" class="status"></div>
+    </form>
+
+    <div class="row">
+        <div class="card">
+            <h2>Prediction Summary</h2>
+            <div id="summary" class="summary-grid"></div>
+            <h2 style="margin-top: 24px; font-size: 14px;">Orderbook Depth</h2>
+            <div id="orderbook" class="orderbook-grid"></div>
+        </div>
+        <div class="card">
+            <h2>Raw Response</h2>
+            <pre id="raw">Waiting for request...</pre>
+        </div>
+    </div>
+
+    <script>
+        function formatNumber(x, digits = 2) {
+            if (x === null || x === undefined || Number.isNaN(x)) return "-";
+            return Number(x).toFixed(digits);
+        }
+
+        function getPillClass(signal) {
+            if (!signal) return "pill pill-hold";
+            const s = String(signal).toUpperCase();
+            if (s === "BUY") return "pill pill-buy";
+            if (s === "SELL") return "pill pill-sell";
+            return "pill pill-hold";
+        }
+
+        function getLevelPrice(row) {
+            if (!row || typeof row !== "object") return "-";
+            if (row.price != null) return formatNumber(row.price, 2);
+            if (row.bidPrice != null) return formatNumber(row.bidPrice, 2);
+            if (row.askPrice != null) return formatNumber(row.askPrice, 2);
+            return "-";
+        }
+
+        function getLevelQty(row) {
+            if (!row || typeof row !== "object") return "-";
+            if (row.quantity != null) return String(row.quantity);
+            if (row.qty != null) return String(row.qty);
+            if (row.volume != null) return String(row.volume);
+            return "-";
+        }
+
+        async function runAutoTrade() {
+            const symbol = document.getElementById("symbol").value.trim();
+            const quantity = parseInt(document.getElementById("quantity").value, 10) || 1;
+            const productType = document.getElementById("product_type").value;
+            const tradeType = document.getElementById("trade_type").value;
+            const statusEl = document.getElementById("status");
+            const rawEl = document.getElementById("raw");
+            const summaryEl = document.getElementById("summary");
+            const orderbookEl = document.getElementById("orderbook");
+            const btn = document.getElementById("submit-btn");
+
+            statusEl.textContent = "Sending request...";
+            rawEl.textContent = "";
+            summaryEl.innerHTML = "";
+            orderbookEl.innerHTML = "";
+            btn.disabled = true;
+
+            try {
+                const payload = {
+                    symbol: symbol,
+                    quantity: quantity,
+                    product_type: productType,
+                    trade_type: tradeType,
+                };
+
+                const res = await fetch("/api/v1/auto/trade", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(payload),
+                });
+
+                const data = await res.json();
+                rawEl.textContent = JSON.stringify(data, null, 2);
+
+                if (!res.ok) {
+                    statusEl.textContent = "Error: " + (data?.detail?.message || data?.detail || res.statusText);
+                    btn.disabled = false;
+                    return;
+                }
+
+                const signal = data?.signal;
+                const entry = data?.entry;
+                const limitPrice = data?.limit_price;
+                const sl = data?.sl;
+                const target = data?.target;
+
+                const order = data?.order_response || {};
+                const orderStatus = order?.status;
+                const message = order?.message;
+                const details = order?.details || {};
+
+                const pills = document.createElement("div");
+                const pill = document.createElement("span");
+                pill.className = getPillClass(signal);
+                pill.textContent = "Signal: " + (signal || "N/A");
+                pills.appendChild(pill);
+
+                const statusSpan = document.createElement("span");
+                statusSpan.style.marginLeft = "8px";
+                statusSpan.style.fontSize = "12px";
+                statusSpan.style.color = "#9ca3af";
+                statusSpan.textContent = orderStatus ? "Order: " + orderStatus : "Order: N/A";
+                pills.appendChild(statusSpan);
+
+                summaryEl.appendChild(pills);
+
+                const items = [
+                    { label: "Entry (LTP)", value: formatNumber(entry) },
+                    { label: "Limit", value: formatNumber(limitPrice) },
+                    { label: "Stop Loss", value: formatNumber(sl) },
+                    { label: "Target", value: formatNumber(target) },
+                    { label: "Quantity", value: details.quantity ?? payload.quantity },
+                    { label: "Security ID", value: details.security_id || "" },
+                    { label: "Order ID", value: order.order_id || "" },
+                ];
+
+                items.forEach((item) => {
+                    const div = document.createElement("div");
+                    div.className = "summary-item";
+
+                    const l = document.createElement("div");
+                    l.className = "summary-label";
+                    l.textContent = item.label;
+                    div.appendChild(l);
+
+                    const v = document.createElement("div");
+                    v.className = "summary-value";
+                    v.textContent = item.value === "" ? "-" : item.value;
+                    div.appendChild(v);
+
+                    summaryEl.appendChild(div);
+                });
+
+                // Render orderbook depth (top 5 levels each side)
+                const ob = data?.orderbook;
+                if (ob && (Array.isArray(ob.bids) || Array.isArray(ob.asks))) {
+                    const bids = Array.isArray(ob.bids) ? ob.bids.slice(0, 5) : [];
+                    const asks = Array.isArray(ob.asks) ? ob.asks.slice(0, 5) : [];
+
+                    const bidsCol = document.createElement("div");
+                    bidsCol.className = "orderbook-col";
+                    const bidsTitle = document.createElement("div");
+                    bidsTitle.className = "orderbook-title";
+                    bidsTitle.textContent = "Bids";
+                    bidsCol.appendChild(bidsTitle);
+                    if (bids.length === 0) {
+                        const row = document.createElement("div");
+                        row.className = "orderbook-row";
+                        row.textContent = "No bids";
+                        bidsCol.appendChild(row);
+                    } else {
+                        bids.forEach((level) => {
+                            const row = document.createElement("div");
+                            row.className = "orderbook-row";
+                            const priceEl = document.createElement("span");
+                            priceEl.className = "orderbook-price";
+                            priceEl.textContent = getLevelPrice(level);
+                            const qtyEl = document.createElement("span");
+                            qtyEl.className = "orderbook-qty";
+                            qtyEl.textContent = getLevelQty(level);
+                            row.appendChild(priceEl);
+                            row.appendChild(qtyEl);
+                            bidsCol.appendChild(row);
+                        });
+                    }
+
+                    const asksCol = document.createElement("div");
+                    asksCol.className = "orderbook-col";
+                    const asksTitle = document.createElement("div");
+                    asksTitle.className = "orderbook-title";
+                    asksTitle.textContent = "Asks";
+                    asksCol.appendChild(asksTitle);
+                    if (asks.length === 0) {
+                        const row = document.createElement("div");
+                        row.className = "orderbook-row";
+                        row.textContent = "No asks";
+                        asksCol.appendChild(row);
+                    } else {
+                        asks.forEach((level) => {
+                            const row = document.createElement("div");
+                            row.className = "orderbook-row";
+                            const priceEl = document.createElement("span");
+                            priceEl.className = "orderbook-price";
+                            priceEl.textContent = getLevelPrice(level);
+                            const qtyEl = document.createElement("span");
+                            qtyEl.className = "orderbook-qty";
+                            qtyEl.textContent = getLevelQty(level);
+                            row.appendChild(priceEl);
+                            row.appendChild(qtyEl);
+                            asksCol.appendChild(row);
+                        });
+                    }
+
+                    orderbookEl.appendChild(bidsCol);
+                    orderbookEl.appendChild(asksCol);
+                } else if (ob && ob.error) {
+                    const col = document.createElement("div");
+                    col.className = "orderbook-col";
+                    const title = document.createElement("div");
+                    title.className = "orderbook-title";
+                    title.textContent = "Orderbook";
+                    const msg = document.createElement("div");
+                    msg.className = "orderbook-row";
+                    msg.textContent = ob.error?.message || "Orderbook unavailable";
+                    col.appendChild(title);
+                    col.appendChild(msg);
+                    orderbookEl.appendChild(col);
+                }
+
+                statusEl.textContent = message || "Request completed.";
+            } catch (err) {
+                console.error(err);
+                statusEl.textContent = "Error: " + (err && err.message ? err.message : String(err));
+            } finally {
+                btn.disabled = false;
+            }
+        }
+    </script>
+</body>
+</html>

@@ -342,8 +342,25 @@ class DhanService:
                 exchange_segment=exchange_segment,
                 instrument_type=instrument_type,
                 from_date=from_date,
-                to_date=to_date
+                to_date=to_date,
             )
+
+            # Normalise DHAN's shape ({"status":"success","data":{...}})
+            # to a flat OHLC structure that the rest of the app expects.
+            if isinstance(response, dict) and response.get("status") == "success":
+                data = response.get("data")
+                if isinstance(data, dict):
+                    if any(k in data for k in ("open", "high", "low", "close", "volume")):
+                        return {
+                            "open": data.get("open") or [],
+                            "high": data.get("high") or [],
+                            "low": data.get("low") or [],
+                            "close": data.get("close") or [],
+                            "volume": data.get("volume") or [],
+                            "timestamp": data.get("timestamp") or [],
+                        }
+
+            # Fallback: return raw response (error cases, unexpected shapes, etc.)
             return response
             
         except Exception as e:

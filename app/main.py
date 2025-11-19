@@ -17,6 +17,8 @@ from app.db.database import Database
 from app.api.v1 import auth_router, dhan_router, watchlist_router, live_feed_router, trade_router
 from app.services.websocket_manager import connection_manager, dhan_ws_manager
 from app.services.options_chain_service import OptionsChainService
+from app.services.model_service import ModelService
+from app.services.trade_service import TradeService
 
 # Configure logging
 logging.basicConfig(
@@ -40,10 +42,22 @@ async def lifespan(app: FastAPI):
     logger.info("📦 Connecting to MongoDB...")
     await Database.connect_db()
     logger.info("✅ MongoDB connected")
-    
+
+    ModelService.initialize()
+
     # Start DHAN WebSocket feed in background
     logger.info("📡 Starting DHAN WebSocket feed...")
     asyncio.create_task(dhan_ws_manager.connect())
+
+    # Start trailing stop-loss worker (uses master DHAN credentials via trade router helper)
+    try:
+        from app.api.v1.trade_router import get_master_user
+
+        master_user = get_master_user()
+        asyncio.create_task(TradeService.run_trailing_sl_worker(master_user))
+        logger.info("🛡️  Trailing SL worker started")
+    except Exception as e:
+        logger.error(f"Failed to start trailing SL worker: {e}")
     
     logger.info("")
     logger.info("=" * 80)
@@ -151,7 +165,6 @@ async def test_historical_page():
 
 @app.get("/live-feed", tags=["Testing"])
 async def live_feed_page():
-    """Serve the live market feed page with real-time NIFTY 50 data."""
     html_path = Path(__file__).parent / "static" / "live_feed.html"
     if html_path.exists():
         return FileResponse(html_path)
@@ -159,11 +172,18 @@ async def live_feed_page():
 
 @app.get("/options-chain", tags=["Testing"])
 async def options_chain_page():
-    """Serve the live options chain page (NIFTY / BANKNIFTY)."""
     html_path = Path(__file__).parent / "static" / "options_chain.html"
     if html_path.exists():
         return FileResponse(html_path)
     return {"error": "Options chain page not found"}
+
+
+@app.get("/auto-trade", tags=["Testing"])
+async def auto_trade_page():
+    html_path = Path(__file__).parent / "static" / "auto_trade.html"
+    if html_path.exists():
+        return FileResponse(html_path)
+    return {"error": "Auto trade page not found"}
 
 
 @app.get("/health", tags=["Health"])

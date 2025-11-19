@@ -9,9 +9,11 @@ import asyncio
 import logging
 import requests
 from datetime import datetime
+from pydantic import BaseModel
 from app.core.config import settings
 from app.services.dhan_market_feed import DhanMarketFeed
 from dhanhq import dhanhq
+from app.api.v1.trade_router import AutoTradeRequest, auto_trade as v1_auto_trade
 
 router = APIRouter(prefix="/api/v2/live-feed", tags=["Live Market Feed"])
 logger = logging.getLogger(__name__)
@@ -70,6 +72,12 @@ NIFTY_50_STOCKS = {
     "157": {"symbol": "APOLLOHOSP", "name": "Apollo Hospitals"},
     "3432": {"symbol": "TATACONSUM", "name": "Tata Consumer"},
 }
+
+
+class LiveAutoTradeRequest(BaseModel):
+    symbol: str
+    quantity: int = 1
+    product_type: str = "MIS"
 
 
 @router.websocket("/nifty50")
@@ -215,6 +223,18 @@ async def websocket_nifty50_feed(websocket: WebSocket):
             await dhan_feed.disconnect()
         
         logger.info(f"Client disconnected. Remaining: {len(active_connections)}")
+
+
+@router.post("/auto/trade")
+async def live_auto_trade(request: LiveAutoTradeRequest):
+    auto_request = AutoTradeRequest(
+        symbol=request.symbol,
+        quantity=request.quantity,
+        product_type=request.product_type,
+    )
+    # Delegate directly to the internal /api/v1/auto/trade handler so the
+    # exact same model + orderbook + trade execution pipeline is used.
+    return await v1_auto_trade(auto_request)
 
 
 @router.get("/status")

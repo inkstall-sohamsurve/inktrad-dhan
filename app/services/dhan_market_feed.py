@@ -280,7 +280,47 @@ class DhanMarketFeed:
         """Parse Full packet (with Market Depth)"""
         # Similar to quote but with market depth (100 bytes)
         # For now, parse the basic quote part
-        return self._parse_quote_packet(payload[:42], security_id, exchange_segment)
+        if len(payload) < 42:
+            return None
+
+        quote_data = self._parse_quote_packet(payload[:42], security_id, exchange_segment)
+        if not quote_data:
+            return None
+
+        depth_payload = payload[42:]
+        bids = []
+        asks = []
+
+        level_size = 16
+        if level_size > 0:
+            max_levels = min(20, len(depth_payload) // level_size)
+        else:
+            max_levels = 0
+
+        for i in range(max_levels):
+            offset = i * level_size
+            bid_price = struct.unpack('<f', depth_payload[offset:offset + 4])[0]
+            bid_qty = struct.unpack('<I', depth_payload[offset + 4:offset + 8])[0]
+            ask_price = struct.unpack('<f', depth_payload[offset + 8:offset + 12])[0]
+            ask_qty = struct.unpack('<I', depth_payload[offset + 12:offset + 16])[0]
+            bids.append({"price": round(bid_price, 2), "qty": bid_qty})
+            asks.append({"price": round(ask_price, 2), "qty": ask_qty})
+
+        if bids:
+            quote_data["best_bid_price"] = bids[0]["price"]
+        else:
+            quote_data["best_bid_price"] = None
+
+        if asks:
+            quote_data["best_ask_price"] = asks[0]["price"]
+        else:
+            quote_data["best_ask_price"] = None
+
+        quote_data["bids"] = bids
+        quote_data["asks"] = asks
+        quote_data["type"] = "full"
+
+        return quote_data
     
     def _parse_prev_close_packet(self, payload: bytes, security_id: str, exchange_segment: int) -> Dict:
         """Parse Previous Close packet"""

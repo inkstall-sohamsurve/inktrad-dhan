@@ -281,6 +281,17 @@ def search_securities(query: str):
     return {k: v for k, v in ALL_INSTRUMENTS.items()
             if query_lower in k.lower()}
 
+def resolve_security_id(symbol: str):
+    info = get_security_info(symbol)
+    if info:
+        return info
+    key = symbol.replace("&", "").replace(" ", "").upper()
+    for name, data in ALL_INSTRUMENTS.items():
+        normalized = name.replace("&", "").replace(" ", "").upper()
+        if normalized == key:
+            return data
+    return None
+
 def get_random_security(instrument_type: str = None):
     """
     Get a random security, optionally filtered by type.

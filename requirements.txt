@@ -12,3 +12,7 @@ cryptography==44.0.0
 websockets==14.1
 pydantic[email]==2.10.3
 requests==2.31.0
+torch==2.3.0
+
+numpy<2
+scikit-learn

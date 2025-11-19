@@ -9,10 +9,13 @@ from fastapi import APIRouter, HTTPException, status, WebSocket, WebSocketDiscon
 from typing import Dict, Any, Optional
 from datetime import datetime, timedelta
 from starlette.websockets import WebSocketState
+from pydantic import BaseModel
 from app.models.trade import TradeEntry, TradeExit, TradeStatus, TradeType
 from app.models.user import UserInDB
 from app.services.trade_service import TradeService
 from app.services.dhan_service import DhanService
+from app.services.model_service import ModelService
+from app.services.dhan_market_feed import DhanMarketFeed
 from app.core.config import settings
 from app.core.security import encrypt_data
 from app.db.database import Database
@@ -21,6 +24,13 @@ router = APIRouter(
     prefix="/api/v1",
     tags=["trades"]
 )
+
+
+class AutoTradeRequest(BaseModel):
+    symbol: str
+    quantity: int = 1
+    product_type: str = "MIS"
+    trade_type: TradeType = TradeType.INTRADAY
 
 
 def get_master_user() -> UserInDB:
@@ -38,6 +48,67 @@ def get_master_user() -> UserInDB:
         dhan_access_token=encrypt_data(settings.DHAN_MASTER_ACCESS_TOKEN),
         created_at=datetime.utcnow(),
     )
+
+
+async def _fetch_orderbook_depth(security_id: str, exchange_segment: str) -> Dict[str, Any]:
+    feed = DhanMarketFeed(
+        client_id=settings.DHAN_MASTER_CLIENT_ID,
+        access_token=settings.DHAN_MASTER_ACCESS_TOKEN,
+    )
+
+    connected = await feed.connect()
+    if not connected:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "error": "ORDERBOOK_CONNECT_FAILED",
+                "message": "Failed to connect to DHAN market feed for orderbook depth",
+            },
+        )
+
+    loop = asyncio.get_running_loop()
+    depth_future: asyncio.Future = loop.create_future()
+
+    async def on_market_data(data: Dict[str, Any]):
+        if (
+            isinstance(data, dict)
+            and data.get("type") == "full"
+            and str(data.get("security_id")) == str(security_id)
+            and not depth_future.done()
+        ):
+            depth_future.set_result(data)
+
+    feed.on_message(on_market_data)
+
+    instruments = [
+        {
+            "ExchangeSegment": exchange_segment,
+            "SecurityId": str(security_id),
+        }
+    ]
+
+    await feed.subscribe_instruments(instruments, mode="full")
+
+    try:
+        market_data = await asyncio.wait_for(depth_future, timeout=3.0)
+    except asyncio.TimeoutError:
+        await feed.disconnect()
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail={
+                "error": "ORDERBOOK_TIMEOUT",
+                "message": "Timed out waiting for orderbook depth from DHAN",
+            },
+        )
+
+    await feed.disconnect()
+
+    return {
+        "best_bid_price": market_data.get("best_bid_price"),
+        "best_ask_price": market_data.get("best_ask_price"),
+        "bids": market_data.get("bids") or [],
+        "asks": market_data.get("asks") or [],
+    }
 
 
 @router.get("/trades/dhan/funds", response_model=Dict[str, Any])
@@ -104,6 +175,133 @@ async def execute_trade(
     """
     user = get_master_user()
     return await TradeService.execute_trade(user, trade_entry)
+
+
+@router.post("/auto/trade", response_model=Dict[str, Any])
+async def auto_trade(request: AutoTradeRequest) -> Dict[str, Any]:
+    user = get_master_user()
+    model = ModelService.get_instance()
+
+    security_info = model.resolve_security(request.symbol)
+    if not security_info:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": "UNKNOWN_SYMBOL",
+                "message": f"Could not resolve security ID for symbol {request.symbol}",
+            },
+        )
+
+    security_id = security_info["security_id"]
+    exchange_segment = security_info["exchange_segment"]
+    instrument_type = security_info["instrument_type"]
+
+    now = datetime.now()
+    from_dt = now - timedelta(minutes=90)
+    from_date = from_dt.strftime("%Y-%m-%d %H:%M:%S")
+    to_date = now.strftime("%Y-%m-%d %H:%M:%S")
+
+    intraday = await DhanService.get_intraday_data(
+        user,
+        security_id=security_id,
+        exchange_segment=exchange_segment,
+        instrument_type=instrument_type,
+        from_date=from_date,
+        to_date=to_date,
+    )
+
+    opens = intraday.get("open") or []
+    highs = intraday.get("high") or []
+    lows = intraday.get("low") or []
+    closes = intraday.get("close") or []
+    volumes = intraday.get("volume") or []
+
+    length = min(len(opens), len(highs), len(lows), len(closes))
+    if length == 0:
+        return {
+            "signal": "HOLD",
+            "entry": None,
+            "sl": None,
+            "target": None,
+            "limit_price": None,
+            "order_response": {
+                "status": "NO_TRADE",
+                "message": "No intraday data returned from DHAN (0 candles).",
+            },
+        }
+
+    start_index = max(0, length - 60)
+    candles = []
+    for i in range(start_index, length):
+        volume_value = volumes[i] if i < len(volumes) else 0
+        candles.append(
+            {
+                "open": float(opens[i]),
+                "high": float(highs[i]),
+                "low": float(lows[i]),
+                "close": float(closes[i]),
+                "volume": float(volume_value),
+            }
+        )
+
+    # Fetch orderbook depth, but never fail the whole request if it times out.
+    try:
+        orderbook = await _fetch_orderbook_depth(
+            security_id=str(security_id), exchange_segment=exchange_segment
+        )
+    except HTTPException as e:
+        detail = e.detail if isinstance(e.detail, dict) else {"message": str(e.detail)}
+        orderbook = {
+            "best_bid_price": None,
+            "best_ask_price": None,
+            "bids": [],
+            "asks": [],
+            "error": detail,
+        }
+
+    prediction = model.predict(candles, orderbook, symbol=request.symbol)
+    signal = prediction["signal"]
+    limit_price = prediction["limit_price"]
+    sl = prediction["stoploss"]
+    target = prediction["target"]
+
+    if signal.upper() == "HOLD" or limit_price is None or sl is None or target is None:
+        return {
+            "signal": signal,
+            "entry": prediction.get("ltp"),
+            "sl": sl,
+            "target": target,
+            "limit_price": limit_price,
+            "orderbook": orderbook,
+            "order_response": {
+                "status": "NO_TRADE",
+                "message": "Model signalled HOLD or incomplete pricing information",
+            },
+        }
+
+    trade_response = await TradeService.execute_model_trade(
+        user=user,
+        symbol=request.symbol,
+        security_id=str(security_id),
+        exchange_segment=exchange_segment,
+        quantity=request.quantity,
+        prediction=signal,
+        limit_price=float(limit_price),
+        sl=float(sl),
+        target=float(target),
+        product_type=request.product_type,
+        trade_type=request.trade_type,
+    )
+
+    return {
+        "signal": signal,
+        "entry": prediction.get("ltp"),
+        "sl": sl,
+        "target": target,
+        "limit_price": limit_price,
+        "orderbook": orderbook,
+        "order_response": trade_response,
+    }
 
 
 @router.post("/trades/exit/{trade_id}", response_model=Dict[str, Any])
@@ -220,6 +418,7 @@ async def sync_trades() -> Dict[str, Any]:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"error": "TRADE_SYNC_FAILED", "message": str(e)},
         )
+
 
 @router.get("/trades/history", response_model=Dict[str, Any])
 async def get_trade_history(
