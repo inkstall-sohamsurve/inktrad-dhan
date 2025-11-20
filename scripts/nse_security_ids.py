@@ -122,6 +122,17 @@ EQUITY_STOCKS = {
     "Mahindra Lifespace": {"security_id": "53229", "exchange_segment": "NSE_EQ", "instrument_type": "EQUITY"},
     "Unitech": {"security_id": "14942", "exchange_segment": "NSE_EQ", "instrument_type": "EQUITY"},
 
+    # Infrastructure & Construction
+    "Larsen & Toubro": {"security_id": "1922", "exchange_segment": "NSE_EQ", "instrument_type": "EQUITY"},
+    "Adani Ports": {"security_id": "15083", "exchange_segment": "NSE_EQ", "instrument_type": "EQUITY"},
+    
+    # NBFC & Finance
+    "Bajaj Finance": {"security_id": "16669", "exchange_segment": "NSE_EQ", "instrument_type": "EQUITY"},
+    "Bajaj Finserv": {"security_id": "16675", "exchange_segment": "NSE_EQ", "instrument_type": "EQUITY"},
+    
+    # Paints & Chemicals
+    "Asian Paints": {"security_id": "173", "exchange_segment": "NSE_EQ", "instrument_type": "EQUITY"},
+
     # Telecom
     "Bharti Airtel": {"security_id": "10604", "exchange_segment": "NSE_EQ", "instrument_type": "EQUITY"},
     "Reliance Communications": {"security_id": "2107", "exchange_segment": "NSE_EQ", "instrument_type": "EQUITY"},

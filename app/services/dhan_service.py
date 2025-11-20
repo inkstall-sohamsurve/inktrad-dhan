@@ -295,7 +295,17 @@ class DhanService:
         Returns:
             Dict containing historical OHLC data
         """
+        import logging
+        logger = logging.getLogger(__name__)
+        
         try:
+            logger.info(f"🔍 DHAN API Request:")
+            logger.info(f"  Security ID: {security_id}")
+            logger.info(f"  Exchange: {exchange_segment}")
+            logger.info(f"  Type: {instrument_type}")
+            logger.info(f"  From: {from_date}")
+            logger.info(f"  To: {to_date}")
+            
             dhan = DhanService.get_dhan_client(user)
             response = dhan.historical_daily_data(
                 security_id=security_id,
@@ -304,9 +314,30 @@ class DhanService:
                 from_date=from_date,
                 to_date=to_date
             )
+            
+            logger.info(f"📊 DHAN API Response:")
+            logger.info(f"  Response type: {type(response)}")
+            logger.info(f"  Response keys: {response.keys() if isinstance(response, dict) else 'Not a dict'}")
+            if isinstance(response, dict) and 'data' in response:
+                data = response['data']
+                logger.info(f"  Data type: {type(data)}")
+                if isinstance(data, list):
+                    logger.info(f"  Data length: {len(data)}")
+                    if len(data) > 0:
+                        logger.info(f"  First candle: {data[0]}")
+                        logger.info(f"  Last candle: {data[-1]}")
+                elif isinstance(data, dict):
+                    logger.info(f"  Data keys: {data.keys()}")
+                    for key in ['open', 'high', 'low', 'close', 'volume']:
+                        if key in data:
+                            logger.info(f"  {key} length: {len(data[key]) if isinstance(data[key], list) else 'Not a list'}")
+            
+            logger.info(f"  Full response: {response}")
+            
             return response
             
         except Exception as e:
+            logger.error(f"❌ DHAN API Error: {str(e)}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Failed to fetch historical data: {str(e)}"

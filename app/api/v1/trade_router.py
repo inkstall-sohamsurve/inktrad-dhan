@@ -291,6 +291,8 @@ async def auto_trade(request: AutoTradeRequest) -> Dict[str, Any]:
         target=float(target),
         product_type=request.product_type,
         trade_type=request.trade_type,
+        tick_size=float(prediction.get("tick_size") or 0.05),
+        is_simulated=False,
     )
 
     return {
@@ -530,6 +532,72 @@ async def get_trade_details(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"error": "TRADE_FETCH_FAILED", "message": str(e)}
         )
+
+
+@router.post("/auto/trade/test", response_model=Dict[str, Any])
+async def auto_trade_test(request: AutoTradeRequest) -> Dict[str, Any]:
+    """Deterministic auto-trade endpoint for testing target/SL auto-exits without real DHAN orders.
+
+    - Uses fixed intraday candles and a synthetic orderbook.
+    - Always creates a simulated BUY model trade with known entry/SL/target.
+    - Trades are marked is_simulated=True so the monitor/SL workers will exit them
+      but no live orders are sent to DHAN.
+    """
+    user = get_master_user()
+
+    # Build deterministic candles (60 bars)
+    candles: list[dict[str, float]] = []
+    base_price = 100.0
+    for i in range(60):
+        o = base_price + 0.1 * i
+        h = o + 0.5
+        l = o - 0.5
+        c = o + 0.2
+        candles.append({"open": o, "high": h, "low": l, "close": c, "volume": 1000 + i})
+
+    # Synthetic orderbook depth with 0.05 tick size
+    orderbook: Dict[str, Any] = {
+        "best_bid_price": 99.9,
+        "best_ask_price": 100.1,
+        "bids": [{"price": 99.9 - 0.05 * i, "qty": 100 * (i + 1)} for i in range(5)],
+        "asks": [{"price": 100.1 + 0.05 * i, "qty": 100 * (i + 1)} for i in range(5)],
+    }
+
+    # Simple deterministic BUY signal around the synthetic candles
+    ltp = candles[-1]["close"]
+    tick_size = 0.05
+    limit_price = ltp - 5 * tick_size
+    # Risk: 1.0 point, Reward: 2.0 points for easy visual testing
+    sl = limit_price - 1.0
+    target = limit_price + 2.0
+
+    signal = "BUY"
+
+    trade_response = await TradeService.execute_model_trade(
+        user=user,
+        symbol=request.symbol,
+        security_id="TEST1333",
+        exchange_segment="NSE_EQ",
+        quantity=request.quantity,
+        prediction=signal,
+        limit_price=float(limit_price),
+        sl=float(sl),
+        target=float(target),
+        product_type=request.product_type,
+        trade_type=request.trade_type,
+        tick_size=tick_size,
+        is_simulated=True,
+    )
+
+    return {
+        "signal": signal,
+        "entry": ltp,
+        "sl": sl,
+        "target": target,
+        "limit_price": limit_price,
+        "orderbook": orderbook,
+        "order_response": trade_response,
+    }
 
 
 @router.get("/trades/stats/summary", response_model=Dict[str, Any])

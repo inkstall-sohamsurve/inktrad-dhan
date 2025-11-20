@@ -323,6 +323,8 @@ class TradeService:
         target: float,
         product_type: str = "MIS",
         trade_type: TradeType = TradeType.INTRADAY,
+        tick_size: Optional[float] = None,
+        is_simulated: bool = False,
     ) -> Dict[str, Any]:
         side = prediction.upper()
         if side not in ("BUY", "SELL"):
@@ -363,22 +365,6 @@ class TradeService:
         try:
             transaction_type = TransactionType.BUY if side == "BUY" else TransactionType.SELL
 
-            dhan_order = DhanOrderRequest(
-                dhan_client_id=decrypt_data(user.dhan_client_id),
-                transaction_type=transaction_type,
-                exchange_segment=entry.exchange_segment,
-                product_type=entry.product_type,
-                order_type=OrderType.LIMIT,
-                validity=Validity.DAY if entry.trade_type == TradeType.INTRADAY else Validity.IOC,
-                trading_symbol=entry.trading_symbol,
-                security_id=entry.security_id,
-                quantity=entry.quantity,
-                disclosed_quantity=0,
-                price=entry.entry_price,
-                trigger_price=entry.stop_loss,
-                after_market_order=False,
-            )
-
             trades_collection = Database.get_trades_collection()
 
             trade_data = {
@@ -396,12 +382,33 @@ class TradeService:
                 "trade_type": entry.trade_type,
                 "product_type": entry.product_type,
                 "transaction_type": transaction_type,
+                "tick_size": tick_size,
+                "is_simulated": is_simulated,
                 "created_at": datetime.utcnow(),
                 "updated_at": datetime.utcnow(),
             }
 
             result = await trades_collection.insert_one(trade_data)
             trade_data["_id"] = str(result.inserted_id)
+            if is_simulated:
+                logger.info("📊 Created simulated model trade %s (no DHAN order)", trade_data["trade_id"])
+                return {
+                    "status": "SIMULATED",
+                    "trade_id": trade_data["trade_id"],
+                    "order_id": None,
+                    "message": "Simulated model trade created (no DHAN order placed)",
+                    "details": {
+                        "security_id": entry.security_id,
+                        "quantity": entry.quantity,
+                        "entry_price": entry.entry_price,
+                        "stop_loss": entry.stop_loss,
+                        "target": entry.target,
+                        "tick_size": tick_size,
+                        "margin_required": margin_required,
+                        "available_margin": available,
+                        "signal": prediction,
+                    },
+                }
 
             import http.client
             import json
@@ -419,6 +426,22 @@ class TradeService:
                 dhan_product_type = "CNC"
             else:
                 dhan_product_type = internal_product_type
+
+            dhan_order = DhanOrderRequest(
+                dhan_client_id=decrypt_data(user.dhan_client_id),
+                transaction_type=transaction_type,
+                exchange_segment=entry.exchange_segment,
+                product_type=entry.product_type,
+                order_type=OrderType.LIMIT,
+                validity=Validity.DAY if entry.trade_type == TradeType.INTRADAY else Validity.IOC,
+                trading_symbol=entry.trading_symbol,
+                security_id=entry.security_id,
+                quantity=entry.quantity,
+                disclosed_quantity=0,
+                price=entry.entry_price,
+                trigger_price=entry.stop_loss,
+                after_market_order=False,
+            )
 
             correlation_id = uuid.uuid4().hex[:24]
             payload = {
@@ -489,6 +512,7 @@ class TradeService:
                     "entry_price": entry.entry_price,
                     "stop_loss": entry.stop_loss,
                     "target": entry.target,
+                    "tick_size": tick_size,
                     "margin_required": margin_required,
                     "available_margin": available,
                     "signal": prediction,
@@ -544,7 +568,7 @@ class TradeService:
             return None
 
     @staticmethod
-    async def run_trailing_sl_worker(user: UserInDB, interval_seconds: int = 30) -> None:
+    async def run_trailing_sl_worker(user: UserInDB, interval_seconds: int = 1) -> None:
         try:
             trades_collection = Database.get_trades_collection()
         except RuntimeError:
@@ -587,6 +611,30 @@ class TradeService:
                         sl_value = float(sl)
                     except Exception:
                         continue
+                    # If price has already crossed the SL in the adverse direction, exit immediately.
+                    try:
+                        if side == "BUY" and current_price <= sl_value:
+                            logger.info("🛑 STOP-LOSS HIT (trailing) for trade %s at %.2f (side=%s, sl=%.2f)", trade.get("trade_id"), current_price, side, sl_value)
+                            from app.models.trade import TradeExit  # local import to avoid circular
+                            await TradeService.exit_trade(
+                                user,
+                                trade_id=str(trade.get("trade_id")),
+                                exit_data=TradeExit(exit_price=float(current_price), exit_reason="STOP-LOSS HIT"),
+                            )
+                            continue
+                        if side == "SELL" and current_price >= sl_value:
+                            logger.info("🛑 STOP-LOSS HIT (trailing) for trade %s at %.2f (side=%s, sl=%.2f)", trade.get("trade_id"), current_price, side, sl_value)
+                            from app.models.trade import TradeExit  # local import to avoid circular
+                            await TradeService.exit_trade(
+                                user,
+                                trade_id=str(trade.get("trade_id")),
+                                exit_data=TradeExit(exit_price=float(current_price), exit_reason="STOP-LOSS HIT"),
+                            )
+                            continue
+                    except HTTPException:
+                        continue
+                    except Exception:
+                        continue
                     new_sl = TradeService.apply_trailing_sl(float(current_price), sl_value, side)
                     if new_sl == sl_value:
                         continue
@@ -603,6 +651,105 @@ class TradeService:
                     )
             except Exception as e:
                 logger.error(f"Error in trailing SL worker loop: {str(e)}")
+            await asyncio.sleep(interval_seconds)
+
+    @staticmethod
+    async def run_trade_monitor_worker(user: UserInDB, interval_seconds: int = 1) -> None:
+        """Monitor active trades and exit immediately when SL or target is hit."""
+        try:
+            trades_collection = Database.get_trades_collection()
+        except RuntimeError:
+            return
+        user_id = str(user.id)
+        from app.models.trade import TradeExit  # local import to avoid circular
+
+        while True:
+            try:
+                cursor = trades_collection.find(
+                    {
+                        "user_id": user_id,
+                        "status": TradeStatus.ENTERED,
+                    }
+                )
+                async for trade in cursor:
+                    trade_id = str(trade.get("trade_id") or "")
+                    if not trade_id:
+                        continue
+                    sl = trade.get("stop_loss")
+                    target = trade.get("target")
+                    raw_side = trade.get("transaction_type")
+                    if isinstance(raw_side, TransactionType):
+                        side = raw_side.value.upper()
+                    else:
+                        side = str(raw_side or "").upper()
+                    if side not in ("BUY", "SELL"):
+                        continue
+                    if sl is None and target is None:
+                        continue
+                    try:
+                        current_price = await TradeService._get_current_price_for_trade(user, trade)
+                    except Exception:
+                        continue
+                    if current_price is None:
+                        continue
+                    hit_reason: Optional[str] = None
+                    try:
+                        sl_value = float(sl) if sl is not None else None
+                    except Exception:
+                        sl_value = None
+                    try:
+                        target_value = float(target) if target is not None else None
+                    except Exception:
+                        target_value = None
+
+                    if side == "BUY":
+                        if target_value is not None and current_price >= target_value:
+                            hit_reason = "TARGET HIT"
+                        elif sl_value is not None and current_price <= sl_value:
+                            hit_reason = "STOP-LOSS HIT"
+                    elif side == "SELL":
+                        if target_value is not None and current_price <= target_value:
+                            hit_reason = "TARGET HIT"
+                        elif sl_value is not None and current_price >= sl_value:
+                            hit_reason = "STOP-LOSS HIT"
+
+                    if not hit_reason:
+                        continue
+
+                    if "TARGET" in hit_reason:
+                        logger.info(
+                            "🎯 TARGET HIT for trade %s at %.2f (side=%s, target=%s, sl=%s)",
+                            trade_id,
+                            current_price,
+                            side,
+                            target_value,
+                            sl_value,
+                        )
+                    else:
+                        logger.info(
+                            "🛑 STOP-LOSS HIT for trade %s at %.2f (side=%s, target=%s, sl=%s)",
+                            trade_id,
+                            current_price,
+                            side,
+                            target_value,
+                            sl_value,
+                        )
+
+                    try:
+                        await TradeService.exit_trade(
+                            user,
+                            trade_id=trade_id,
+                            exit_data=TradeExit(exit_price=float(current_price), exit_reason=hit_reason),
+                        )
+                    except HTTPException as e:
+                        detail = getattr(e, "detail", {})
+                        if isinstance(detail, dict) and detail.get("error") in {"TRADE_ALREADY_EXITED", "TRADE_NOT_FOUND"}:
+                            continue
+                        logger.error("Error exiting trade %s in monitor worker: %s", trade_id, e)
+                    except Exception as e:
+                        logger.error("Unexpected error exiting trade %s in monitor worker: %s", trade_id, e)
+            except Exception as e:
+                logger.error("Error in trade monitor worker loop: %s", str(e))
             await asyncio.sleep(interval_seconds)
 
     @staticmethod
@@ -634,37 +781,76 @@ class TradeService:
                 detail={"error": "TRADE_ALREADY_EXITED", "message": f"Trade {trade_id} is already exited"}
             )
         
-        # Prepare exit order
-        exit_order = DhanOrderRequest(
-            dhan_client_id=decrypt_data(user.dhan_client_id),
-            transaction_type=TransactionType.SELL,
-            exchange_segment=trade["exchange_segment"],
-            product_type=trade["product_type"],
-            order_type=OrderType.MARKET if exit_data.exit_price is None else OrderType.LIMIT,
-            validity=Validity.DAY if trade["trade_type"] == TradeType.INTRADAY else Validity.IOC,
-            trading_symbol=trade["trading_symbol"],
-            security_id=trade["security_id"],
-            quantity=trade["quantity"],
-            disclosed_quantity=0,
-            price=exit_data.exit_price,
-            after_market_order=False
-        )
-        
+        is_simulated = bool(trade.get("is_simulated", False))
+        raw_side = trade.get("transaction_type")
+        if isinstance(raw_side, TransactionType):
+            side = raw_side.value.upper()
+        else:
+            side = str(raw_side or "").upper()
+        exit_side = TransactionType.SELL if side != "SELL" else TransactionType.BUY
+
+        # Calculate P&L and charges using the provided exit price
         try:
-            # Place exit order using direct HTTP client
+            exit_price_value = float(exit_data.exit_price)
+        except Exception:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"error": "INVALID_EXIT_PRICE", "message": "Exit price must be a valid number"},
+            )
+
+        entry_value = trade["quantity"] * trade["entry_price"]
+        exit_value = trade["quantity"] * exit_price_value
+        pnl = exit_value - entry_value if side == "BUY" else entry_value - exit_value
+        pnl_percentage = (pnl / entry_value) * 100 if entry_value != 0 else 0.0
+
+        # Calculate charges for both entry and exit
+        entry_charges = await TradeService.calculate_charges(entry_value)
+        exit_charges = await TradeService.calculate_charges(exit_value)
+        total_charges = entry_charges["total_charges"] + exit_charges["total_charges"]
+        net_pnl = pnl - total_charges
+
+        update_data = {
+            "exit_price": exit_price_value,
+            "exit_time": datetime.utcnow(),
+            "status": TradeStatus.EXITED,
+            "exit_reason": exit_data.exit_reason,
+            "pnl": round(pnl, 2),
+            "pnl_percentage": round(pnl_percentage, 2),
+            "brokerage": round(entry_charges["brokerage"] + exit_charges["brokerage"], 2),
+            "taxes": round(
+                entry_charges["total_charges"]
+                + exit_charges["total_charges"]
+                - (entry_charges["brokerage"] + exit_charges["brokerage"]),
+                2,
+            ),
+            "net_pnl": round(net_pnl, 2),
+            "updated_at": datetime.utcnow(),
+        }
+
+        # For simulated trades, just update DB and skip DHAN
+        if is_simulated:
+            await trades_collection.update_one({"trade_id": trade_id}, {"$set": update_data})
+            logger.info("✅ Simulated trade %s exited locally (no DHAN order)", trade_id)
+            return {
+                "status": "SUCCESS",
+                "trade_id": trade_id,
+                "order_id": None,
+                "message": "Simulated trade exited successfully",
+                "pnl": pnl,
+                "pnl_percentage": pnl_percentage,
+                "charges": total_charges,
+                "net_pnl": net_pnl,
+            }
+
+        # Real DHAN exit: always market order with price 0
+        try:
             import http.client
             import json
-            
-            # Get decrypted access token
+
             access_token = decrypt_data(user.dhan_access_token)
-            
             conn = http.client.HTTPSConnection("api.dhan.co")
 
-            # Convert order request to DHAN API format
-            # DHAN requires correlationId to be at most 25 characters.
             correlation_id = uuid.uuid4().hex[:24]
-
-            # Map internal product types (MIS/CNC/NRML) to DHAN API productType
             internal_product_type = trade["product_type"]
             if internal_product_type == "MIS":
                 dhan_product_type = "INTRADAY"
@@ -673,8 +859,22 @@ class TradeService:
             elif internal_product_type == "CNC":
                 dhan_product_type = "CNC"
             else:
-                # Fallback to whatever is stored
                 dhan_product_type = internal_product_type
+
+            exit_order = DhanOrderRequest(
+                dhan_client_id=decrypt_data(user.dhan_client_id),
+                transaction_type=exit_side,
+                exchange_segment=trade["exchange_segment"],
+                product_type=trade["product_type"],
+                order_type=OrderType.MARKET,
+                validity=Validity.DAY if trade["trade_type"] == TradeType.INTRADAY else Validity.IOC,
+                trading_symbol=trade["trading_symbol"],
+                security_id=trade["security_id"],
+                quantity=trade["quantity"],
+                disclosed_quantity=0,
+                price=0.0,
+                after_market_order=False,
+            )
 
             payload = {
                 "dhanClientId": decrypt_data(user.dhan_client_id),
@@ -688,16 +888,16 @@ class TradeService:
                 "securityId": exit_order.security_id,
                 "quantity": exit_order.quantity,
                 "disclosedQuantity": exit_order.disclosed_quantity or 0,
-                "price": exit_order.price,
-                "triggerPrice": None,
+                "price": 0,
+                "triggerPrice": 0,
                 "afterMarketOrder": False,
-                "amoTime": "OPEN"
+                "amoTime": "OPEN",
             }
 
             headers = {
-                'access-token': access_token,
-                'Content-Type': 'application/json',
-                'Accept': 'application/json'
+                "access-token": access_token,
+                "Content-Type": "application/json",
+                "Accept": "application/json",
             }
 
             conn.request("POST", "/orders", json.dumps(payload), headers)
@@ -726,43 +926,9 @@ class TradeService:
                         "response": order_response,
                     },
                 )
-            
-            # Calculate P&L and charges
-            entry_value = trade["quantity"] * trade["entry_price"]
-            exit_value = trade["quantity"] * exit_data.exit_price
-            pnl = exit_value - entry_value if trade["transaction_type"] == "BUY" else entry_value - exit_value
-            pnl_percentage = (pnl / entry_value) * 100
-            
-            # Calculate charges for both entry and exit
-            entry_charges = await TradeService.calculate_charges(entry_value)
-            exit_charges = await TradeService.calculate_charges(exit_value)
-            
-            total_charges = entry_charges["total_charges"] + exit_charges["total_charges"]
-            net_pnl = pnl - total_charges
-            
-            # Update trade with exit details
-            update_data = {
-                "exit_price": exit_data.exit_price,
-                "exit_time": datetime.utcnow(),
-                "status": TradeStatus.EXITED,
-                "exit_reason": exit_data.exit_reason,
-                "pnl": round(pnl, 2),
-                "pnl_percentage": round(pnl_percentage, 2),
-                "brokerage": round(entry_charges["brokerage"] + exit_charges["brokerage"], 2),
-                "taxes": round(entry_charges["total_charges"] + exit_charges["total_charges"] - 
-                              (entry_charges["brokerage"] + exit_charges["brokerage"]), 2),
-                "net_pnl": round(net_pnl, 2),
-                "updated_at": datetime.utcnow()
-            }
-            
-            await trades_collection.update_one(
-                {"trade_id": trade_id},
-                {"$set": update_data}
-            )
-            
-            # Get updated trade
-            updated_trade = await trades_collection.find_one({"trade_id": trade_id})
-            
+
+            await trades_collection.update_one({"trade_id": trade_id}, {"$set": update_data})
+
             return {
                 "status": "SUCCESS",
                 "trade_id": trade_id,
@@ -771,19 +937,18 @@ class TradeService:
                 "pnl": pnl,
                 "pnl_percentage": pnl_percentage,
                 "charges": total_charges,
-                "net_pnl": net_pnl
+                "net_pnl": net_pnl,
             }
 
         except HTTPException:
             # Propagate DHAN HTTP errors without wrapping
             raise
         except Exception as e:
-            logger.error(f"Error exiting trade: {str(e)}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail={"error": "TRADE_EXIT_FAILED", "message": str(e)}
+                detail={"error": "TRADE_EXIT_FAILED", "message": str(e)},
             )
-    
+
     @staticmethod
     async def get_trade_history(user: UserInDB, limit: int = 10, skip: int = 0) -> Dict[str, Any]:
         """

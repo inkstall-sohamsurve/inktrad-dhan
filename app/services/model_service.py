@@ -236,7 +236,13 @@ class ModelService:
         mapping = {0: "SELL", 1: "HOLD", 2: "BUY"}
         return mapping.get(index, "HOLD")
 
-    def _compute_prices(self, signal: str, ltp: float, orderbook: Dict[str, Any]) -> Dict[str, Optional[float]]:
+    def _compute_prices(
+        self,
+        signal: str,
+        ltp: float,
+        orderbook: Dict[str, Any],
+        candles: Optional[List[Any]] = None,
+    ) -> Dict[str, Optional[float]]:
         bids = orderbook.get("bids") or []
         asks = orderbook.get("asks") or []
         best_bid = orderbook.get("best_bid_price")
@@ -245,8 +251,9 @@ class ModelService:
         best_ask = orderbook.get("best_ask_price")
         if best_ask is None and asks:
             best_ask = float(asks[0].get("price", 0.0))
+
         tick_reference = bids if bids else asks
-        tick_size = None
+        tick_size: Optional[float] = None
         if isinstance(tick_reference, list) and len(tick_reference) >= 2:
             p0 = float(tick_reference[0].get("price", 0.0))
             p1 = float(tick_reference[1].get("price", 0.0))
@@ -255,30 +262,90 @@ class ModelService:
                 tick_size = delta
         if tick_size is None:
             tick_size = 0.05
-        limit_price = None
+
+        def _round_to_tick(price: float) -> float:
+            if tick_size is None or tick_size <= 0:
+                return float(price)
+            return round(float(price) / tick_size) * tick_size
+
+        # ATR / volatility-based risk sizing
+        atr: Optional[float] = None
+        if candles and len(candles) >= 2:
+            try:
+                period = min(14, len(candles) - 1)
+                recent = candles[-(period + 1) :]
+                trs: List[float] = []
+
+                first = recent[0]
+                if isinstance(first, dict):
+                    prev_close_val = float(first.get("close"))
+                else:
+                    prev_close_val = float(first[3])
+
+                for c in recent[1:]:
+                    if isinstance(c, dict):
+                        high_val = float(c["high"])
+                        low_val = float(c["low"])
+                        close_val = float(c["close"])
+                    else:
+                        high_val = float(c[1])
+                        low_val = float(c[2])
+                        close_val = float(c[3])
+                    tr = max(
+                        high_val - low_val,
+                        abs(high_val - prev_close_val),
+                        abs(low_val - prev_close_val),
+                    )
+                    trs.append(tr)
+                    prev_close_val = close_val
+
+                if trs:
+                    atr = sum(trs) / float(len(trs))
+            except Exception:
+                atr = None
+
+        min_risk_points = max(0.002 * float(ltp), 2.0 * tick_size)
+        if atr is not None and atr > 0.0:
+            risk_points = max(atr, min_risk_points)
+        else:
+            risk_points = min_risk_points
+
+        reward_multiple = 2.0
+
+        limit_price: Optional[float] = None
+        stoploss: Optional[float] = None
+        target: Optional[float] = None
+
         if signal == "BUY":
             # Place buy limit 5 ticks below LTP using tick size inferred from orderbook depth.
             limit_price = float(ltp) - 5 * tick_size
+            stoploss = limit_price - risk_points
+            target = limit_price + reward_multiple * risk_points
         elif signal == "SELL":
             # Place sell limit 5 ticks above LTP using tick size inferred from orderbook depth.
             limit_price = float(ltp) + 5 * tick_size
-        stoploss = None
-        target = None
+            stoploss = limit_price + risk_points
+            target = limit_price - reward_multiple * risk_points
+
+        if limit_price is not None:
+            limit_price = _round_to_tick(limit_price)
+        if stoploss is not None:
+            stoploss = _round_to_tick(stoploss)
+        if target is not None:
+            target = _round_to_tick(target)
+
         if signal == "HOLD":
             limit_price = None
-        else:
-            if signal == "BUY":
-                stoploss = limit_price - 2 * tick_size
-                target = limit_price + 4 * tick_size
-            elif signal == "SELL":
-                stoploss = limit_price + 2 * tick_size
-                target = limit_price - 4 * tick_size
+            stoploss = None
+            target = None
+
         return {
             "limit_price": float(limit_price) if limit_price is not None else None,
             "stoploss": float(stoploss) if stoploss is not None else None,
             "target": float(target) if target is not None else None,
             "best_bid_price": float(best_bid) if best_bid is not None else None,
             "best_ask_price": float(best_ask) if best_ask is not None else None,
+            "tick_size": float(tick_size) if tick_size is not None else None,
         }
 
     def predict(self, candles: List[Any], orderbook: Dict[str, Any], symbol: Optional[str] = None) -> Dict[str, Any]:
@@ -336,7 +403,7 @@ class ModelService:
             else:
                 signal = "HOLD"
 
-        prices = self._compute_prices(signal, ltp, orderbook)
+        prices = self._compute_prices(signal, ltp, orderbook, candles)
         result: Dict[str, Any] = {
             "signal": signal,
             "limit_price": prices["limit_price"],
@@ -345,6 +412,7 @@ class ModelService:
             "ltp": ltp,
             "best_bid_price": prices["best_bid_price"],
             "best_ask_price": prices["best_ask_price"],
+            "tick_size": prices.get("tick_size"),
         }
         if "predicted_close" not in result:
             result["predicted_close"] = predicted_close if "predicted_close" in locals() else None

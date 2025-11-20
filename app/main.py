@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from app.core.config import settings
 from app.db.database import Database
-from app.api.v1 import auth_router, dhan_router, watchlist_router, live_feed_router, trade_router
+from app.api.v1 import auth_router, dhan_router, watchlist_router, live_feed_router, trade_router, backtest_router
 from app.services.websocket_manager import connection_manager, dhan_ws_manager
 from app.services.options_chain_service import OptionsChainService
 from app.services.model_service import ModelService
@@ -49,15 +49,17 @@ async def lifespan(app: FastAPI):
     logger.info("📡 Starting DHAN WebSocket feed...")
     asyncio.create_task(dhan_ws_manager.connect())
 
-    # Start trailing stop-loss worker (uses master DHAN credentials via trade router helper)
+    # Start trailing stop-loss and trade monitor workers (use master DHAN credentials)
     try:
         from app.api.v1.trade_router import get_master_user
 
         master_user = get_master_user()
-        asyncio.create_task(TradeService.run_trailing_sl_worker(master_user))
+        asyncio.create_task(TradeService.run_trailing_sl_worker(master_user, interval_seconds=1))
+        asyncio.create_task(TradeService.run_trade_monitor_worker(master_user, interval_seconds=1))
         logger.info("🛡️  Trailing SL worker started")
+        logger.info("🔍 Trade monitor worker started")
     except Exception as e:
-        logger.error(f"Failed to start trailing SL worker: {e}")
+        logger.error(f"Failed to start background trade workers: {e}")
     
     logger.info("")
     logger.info("=" * 80)
@@ -139,6 +141,7 @@ app.include_router(dhan_router.router)
 app.include_router(watchlist_router.router)
 app.include_router(live_feed_router.router)
 app.include_router(trade_router.router)
+app.include_router(backtest_router.router)
 
 @app.get("/", tags=["Root"])
 async def root():

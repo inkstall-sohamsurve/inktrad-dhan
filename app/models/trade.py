@@ -3,6 +3,7 @@ from enum import Enum
 from typing import Optional
 from pydantic import BaseModel, Field
 
+
 class TradeStatus(str, Enum):
     PENDING = "PENDING"
     ENTERED = "ENTERED"
@@ -64,6 +65,9 @@ class TradeInDB(BaseModel):
     status: TradeStatus
     trade_type: TradeType
     product_type: str
+    transaction_type: Optional[str] = None
+    tick_size: Optional[float] = None
+    is_simulated: bool = False
     exit_reason: Optional[str] = None
     pnl: Optional[float] = None
     pnl_percentage: Optional[float] = None
@@ -91,6 +95,9 @@ class TradeInDB(BaseModel):
                 "status": "EXITED",
                 "trade_type": "INTRADAY",
                 "product_type": "MIS",
+                "transaction_type": "BUY",
+                "tick_size": 0.05,
+                "is_simulated": False,
                 "exit_reason": "Target hit",
                 "pnl": 49.75,
                 "pnl_percentage": 1.99,
