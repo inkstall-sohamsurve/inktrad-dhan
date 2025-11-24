@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Live Commodity Options Chain - Inktrad</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      padding: 20px;
+    }
+    .container {
+      max-width: 1600px;
+      margin: 0 auto;
+      background: white;
+      border-radius: 12px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+      overflow: hidden;
+    }
+    .header {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 30px;
+      text-align: center;
+    }
+    .header h1 {
+      font-size: 32px;
+      margin-bottom: 10px;
+    }
+    .header p {
+      opacity: 0.9;
+      font-size: 14px;
+    }
+    .controls {
+      padding: 20px 30px;
+      background: #f8f9fa;
+      border-bottom: 1px solid #dee2e6;
+      display: flex;
+      gap: 15px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .control-group {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+    .control-group label {
+      font-size: 12px;
+      font-weight: 600;
+      color: #495057;
+      text-transform: uppercase;
+    }
+    select, input {
+      padding: 8px 12px;
+      border: 1px solid #ced4da;
+      border-radius: 6px;
+      font-size: 14px;
+      background: white;
+    }
+    select {
+      min-width: 150px;
+    }
+    input[type="number"] {
+      width: 80px;
+    }
+    button {
+      padding: 8px 20px;
+      border: none;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.3s;
+      align-self: flex-end;
+    }
+    .btn-start {
+      background: #28a745;
+      color: white;
+    }
+    .btn-start:hover:not(:disabled) {
+      background: #218838;
+    }
+    .btn-stop {
+      background: #dc3545;
+      color: white;
+    }
+    .btn-stop:hover:not(:disabled) {
+      background: #c82333;
+    }
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .stats {
+      padding: 20px 30px;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 15px;
+      background: #f8f9fa;
+      border-bottom: 1px solid #dee2e6;
+    }
+    .stat-card {
+      background: white;
+      padding: 15px;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .stat-label {
+      font-size: 12px;
+      color: #6c757d;
+      font-weight: 600;
+      text-transform: uppercase;
+      margin-bottom: 5px;
+    }
+    .stat-value {
+      font-size: 20px;
+      font-weight: 700;
+      color: #212529;
+    }
+    .table-container {
+      overflow-x: auto;
+      max-height: calc(100vh - 400px);
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    thead {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      background: #343a40;
+      color: white;
+    }
+    th {
+      padding: 12px 8px;
+      text-align: center;
+      font-weight: 600;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .ce-header {
+      background: #28a745;
+    }
+    .pe-header {
+      background: #dc3545;
+    }
+    td {
+      padding: 10px 8px;
+      text-align: center;
+      border-bottom: 1px solid #dee2e6;
+    }
+    tr:hover {
+      background: #f8f9fa;
+    }
+    .strike {
+      font-weight: 700;
+      font-size: 14px;
+      background: #e9ecef;
+    }
+    .atm {
+      background: #fff3cd !important;
+      font-weight: 700;
+    }
+    .positive {
+      color: #28a745;
+    }
+    .negative {
+      color: #dc3545;
+    }
+    .maxoi {
+      background: #d1ecf1;
+      font-weight: 700;
+    }
+    .greeks {
+      font-size: 11px;
+      color: #6c757d;
+    }
+    .status {
+      padding: 20px 30px;
+      text-align: center;
+      color: #6c757d;
+      font-style: italic;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>🏭 Live Commodity Options Chain</h1>
+      <p>Real-time MCX commodity options data from DHAN API</p>
+    </div>
+
+    <div class="controls">
+      <div class="control-group">
+        <label>Commodity (One at a time)</label>
+        <select id="commoditySelect">
+          <option value="CRUDEOIL">Crude Oil</option>
+          <option value="GOLD">Gold</option>
+          <option value="SILVER">Silver</option>
+          <option value="NATURALGAS">Natural Gas</option>
+          <option value="COPPER">Copper</option>
+          <option value="ZINC">Zinc</option>
+        </select>
+      </div>
+      <div class="control-group">
+        <label>Strikes Each Side</label>
+        <input type="number" id="strikesInput" value="10" min="5" max="20">
+      </div>
+      <button class="btn-start" id="startBtn" onclick="startStream()">Start Stream</button>
+      <button class="btn-stop" id="stopBtn" onclick="stopStream()" disabled>Stop Stream</button>
+      <div class="control-group" style="margin-left: auto;">
+        <label style="color: #6c757d; font-size: 11px;">💡 Tip: Stop current stream before starting another</label>
+      </div>
+    </div>
+
+    <div class="stats">
+      <div class="stat-card">
+        <div class="stat-label">Commodity</div>
+        <div class="stat-value" id="statCommodity">-</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Spot Price</div>
+        <div class="stat-value" id="statSpot">-</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Expiry</div>
+        <div class="stat-value" id="statExpiry">-</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Lot Size</div>
+        <div class="stat-value" id="statLotSize">-</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Last Updated</div>
+        <div class="stat-value" id="statUpdated">-</div>
+      </div>
+    </div>
+
+    <div class="table-container">
+      <table>
+        <thead>
+          <tr>
+            <th colspan="7" class="ce-header">CALL OPTIONS</th>
+            <th rowspan="2" class="strike">STRIKE</th>
+            <th colspan="7" class="pe-header">PUT OPTIONS</th>
+          </tr>
+          <tr>
+            <th class="ce-header">OI</th>
+            <th class="ce-header">OI Chg</th>
+            <th class="ce-header">Volume</th>
+            <th class="ce-header">IV</th>
+            <th class="ce-header">LTP</th>
+            <th class="ce-header">Change</th>
+            <th class="ce-header">Bid/Ask</th>
+            
+            <th class="pe-header">Bid/Ask</th>
+            <th class="pe-header">Change</th>
+            <th class="pe-header">LTP</th>
+            <th class="pe-header">IV</th>
+            <th class="pe-header">Volume</th>
+            <th class="pe-header">OI Chg</th>
+            <th class="pe-header">OI</th>
+          </tr>
+        </thead>
+        <tbody id="chainBody">
+          <tr>
+            <td colspan="15" class="status">Click "Start Stream" to load commodity options data</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    let ws = null;
+    let currentCommodity = 'CRUDEOIL';
+
+    const commoditySelect = document.getElementById('commoditySelect');
+    const strikesInput = document.getElementById('strikesInput');
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const chainBody = document.getElementById('chainBody');
+    const statCommodity = document.getElementById('statCommodity');
+    const statSpot = document.getElementById('statSpot');
+    const statExpiry = document.getElementById('statExpiry');
+    const statLotSize = document.getElementById('statLotSize');
+    const statUpdated = document.getElementById('statUpdated');
+
+    function startStream() {
+      const commodity = commoditySelect.value;
+      const strikes = parseInt(strikesInput.value) || 10;
+      
+      // Stop any existing stream first
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        console.log('⚠️ Stopping previous stream for', currentCommodity);
+        ws.send(JSON.stringify({ action: 'stop' }));
+        ws.close();
+        ws = null;
+      }
+      
+      currentCommodity = commodity;
+      chainBody.innerHTML = '<tr><td colspan="15" class="status">🔄 Connecting to WebSocket...</td></tr>';
+
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${protocol}//${window.location.host}/api/v2/ws/commodity-options`;
+
+      console.log('Connecting to:', wsUrl);
+      ws = new WebSocket(wsUrl);
+
+      ws.onopen = () => {
+        console.log('✅ WebSocket connected for', commodity);
+        ws.send(JSON.stringify({
+          action: 'start',
+          commodity: commodity,
+          strikesEachSide: strikes
+        }));
+        chainBody.innerHTML = `<tr><td colspan="15" class="status">⏳ Loading ${commodity} options data...</td></tr>`;
+        
+        // Update UI to show active commodity
+        statCommodity.textContent = commodity;
+        startBtn.disabled = true;
+        stopBtn.disabled = false;
+        commoditySelect.disabled = true;
+        strikesInput.disabled = true;
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          console.log('Received:', data.type);
+
+          if (data.type === 'connection') {
+            console.log('✅ Connection established:', data.message);
+            startBtn.disabled = true;
+            stopBtn.disabled = false;
+          } else if (data.type === 'snapshot') {
+            renderOptionsChain(data);
+          } else if (data.type === 'error') {
+            console.error('❌ Error:', data.message);
+            const errorHtml = `
+              <tr>
+                <td colspan="15" class="status" style="color: #dc3545; text-align: left; padding: 30px;">
+                  <h3 style="margin-bottom: 15px;">⚠️ ${data.message}</h3>
+                  <pre style="white-space: pre-wrap; font-size: 13px; line-height: 1.6; color: #495057;">${data.details || ''}</pre>
+                </td>
+              </tr>
+            `;
+            chainBody.innerHTML = errorHtml;
+          } else if (data.type === 'ping') {
+            ws.send(JSON.stringify({ action: 'ping' }));
+          }
+        } catch (error) {
+          console.error('Error parsing message:', error);
+        }
+      };
+
+      ws.onerror = (error) => {
+        console.error('❌ WebSocket error:', error);
+        chainBody.innerHTML = '<tr><td colspan="15" class="status" style="color: #dc3545;">WebSocket error. Check console and ensure backend is running.</td></tr>';
+      };
+
+      ws.onclose = () => {
+        console.log('📴 WebSocket closed');
+        if (startBtn.disabled) {
+          chainBody.innerHTML = '<tr><td colspan="15" class="status">Connection closed. Click Start to reconnect.</td></tr>';
+        }
+        startBtn.disabled = false;
+        stopBtn.disabled = true;
+        commoditySelect.disabled = false;
+        strikesInput.disabled = false;
+      };
+    }
+
+    function stopStream() {
+      if (ws) {
+        console.log('🛑 Stopping stream for', currentCommodity);
+        ws.send(JSON.stringify({ action: 'stop' }));
+        ws.close();
+        ws = null;
+      }
+      startBtn.disabled = false;
+      stopBtn.disabled = true;
+      commoditySelect.disabled = false;
+      strikesInput.disabled = false;
+      chainBody.innerHTML = '<tr><td colspan="15" class="status">Stream stopped. Select a commodity and click Start to begin.</td></tr>';
+    }
+
+    function renderOptionsChain(snapshot) {
+      if (!snapshot || !snapshot.rows || snapshot.rows.length === 0) {
+        chainBody.innerHTML = '<tr><td colspan="15" class="status">No data available</td></tr>';
+        return;
+      }
+
+      // Update stats
+      statCommodity.textContent = snapshot.name || snapshot.commodity;
+      statSpot.textContent = snapshot.spot ? snapshot.spot.toFixed(2) : '-';
+      statExpiry.textContent = snapshot.expiry || '-';
+      statLotSize.textContent = snapshot.lot_size ? snapshot.lot_size.toLocaleString() : '-';
+      statUpdated.textContent = new Date(snapshot.ts).toLocaleTimeString();
+
+      // Find ATM strike
+      const atmStrike = snapshot.rows.reduce((prev, curr) => 
+        Math.abs(curr.strike - snapshot.spot) < Math.abs(prev.strike - snapshot.spot) ? curr : prev
+      ).strike;
+
+      // Find max OI
+      let maxCeOi = 0, maxPeOi = 0;
+      snapshot.rows.forEach(r => {
+        if (r.ce.oi > maxCeOi) maxCeOi = r.ce.oi;
+        if (r.pe.oi > maxPeOi) maxPeOi = r.pe.oi;
+      });
+
+      chainBody.innerHTML = '';
+
+      snapshot.rows.forEach(row => {
+        const strike = row.strike;
+        const ce = row.ce;
+        const pe = row.pe;
+
+        const tr = document.createElement('tr');
+        if (strike === atmStrike) tr.classList.add('atm');
+
+        const ceChgCls = ce.chg >= 0 ? 'positive' : 'negative';
+        const peChgCls = pe.chg >= 0 ? 'positive' : 'negative';
+        const ceOiCls = (maxCeOi > 0 && ce.oi === maxCeOi) ? 'maxoi' : '';
+        const peOiCls = (maxPeOi > 0 && pe.oi === maxPeOi) ? 'maxoi' : '';
+
+        tr.innerHTML = `
+          <td class="${ceOiCls}">${formatNum(ce.oi)}</td>
+          <td class="${ce.oi_chg >= 0 ? 'positive' : 'negative'}">${formatSigned(ce.oi_chg)}</td>
+          <td>${formatNum(ce.vol)}</td>
+          <td class="greeks">${ce.iv ? ce.iv.toFixed(1) + '%' : '-'}</td>
+          <td>${ce.ltp.toFixed(2)}</td>
+          <td class="${ceChgCls}">${formatSigned(ce.chg)} (${ce.chg_pct.toFixed(2)}%)</td>
+          <td class="greeks">${ce.bid.toFixed(2)}/${ce.ask.toFixed(2)}</td>
+          
+          <td class="strike">${strike.toLocaleString()}</td>
+          
+          <td class="greeks">${pe.bid.toFixed(2)}/${pe.ask.toFixed(2)}</td>
+          <td class="${peChgCls}">${formatSigned(pe.chg)} (${pe.chg_pct.toFixed(2)}%)</td>
+          <td>${pe.ltp.toFixed(2)}</td>
+          <td class="greeks">${pe.iv ? pe.iv.toFixed(1) + '%' : '-'}</td>
+          <td>${formatNum(pe.vol)}</td>
+          <td class="${pe.oi_chg >= 0 ? 'positive' : 'negative'}">${formatSigned(pe.oi_chg)}</td>
+          <td class="${peOiCls}">${formatNum(pe.oi)}</td>
+        `;
+        chainBody.appendChild(tr);
+      });
+    }
+
+    function formatNum(num) {
+      if (num >= 10000000) return (num / 10000000).toFixed(2) + 'Cr';
+      if (num >= 100000) return (num / 100000).toFixed(2) + 'L';
+      if (num >= 1000) return (num / 1000).toFixed(2) + 'K';
+      return num.toLocaleString();
+    }
+
+    function formatSigned(num) {
+      return num >= 0 ? '+' + num.toFixed(2) : num.toFixed(2);
+    }
+
+    // Auto-start on page load
+    window.addEventListener('load', () => {
+      console.log('Page loaded, ready to connect');
+    });
+  </script>
+</body>
+</html>

@@ -1,15 +1,15 @@
 import asyncio
-import csv
-import os
-import re
+import logging
 import struct
 from dataclasses import dataclass
-from datetime import datetime, date
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
+from datetime import datetime, date, timedelta
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 
-import requests
 import websockets
+from dhanhq import dhanhq
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 SUBSCRIBE_TICKER = 15
@@ -27,12 +27,12 @@ RESPONSE_OI = 5
 # Index configurations for Dhan option chain API
 INDEX_UNDERLYING = {
     "NIFTY": {
-        "security_id": "13",  # Nifty
+        "security_id": 13,  # Nifty (must be int, not string)
         "step": 50,
         "exchange_segment": "IDX_I"
     },
     "BANKNIFTY": {
-        "security_id": "23",  # BankNifty
+        "security_id": 25,  # BankNifty (must be int, not string)
         "step": 100,
         "exchange_segment": "IDX_I"
     }
@@ -51,161 +51,6 @@ class Contract:
 def _json(obj: Dict) -> str:
     import json
     return json.dumps(obj)
-
-
-def _is_symbol_for_index(sym: str) -> Dict[str, bool]:
-    u = sym.upper()
-    # Split symbol into alphabetic and numeric segments. This makes
-    # 'NIFTY28NOV25CE' -> ['NIFTY','28','NOV','25','CE'] and avoids
-    # accidental matches like FINNIFTY or NIFTYIT.
-    tokens = re.findall(r"[A-Z]+|[0-9]+", u)
-    has_nifty = "NIFTY" in tokens
-    has_banknifty = "BANKNIFTY" in tokens
-    return {"NIFTY": has_nifty and not has_banknifty, "BANKNIFTY": has_banknifty}
-
-
-def normalize_header_map(sample_row: Dict) -> Dict[str, str]:
-    """Map standard field names to actual CSV headers."""
-    m = {
-        # New DHAN format
-        "exchangesegment": "SEM_EXM_EXCH_ID",
-        "segment": "SEM_SEGMENT",
-        "securityid": "SEM_SMST_SECURITY_ID",
-        "instrument": "SEM_INSTRUMENT_NAME",
-        "symbol": "SEM_TRADING_SYMBOL",
-        "expiry": "SEM_EXPIRY_DATE",
-        "strike": "SEM_STRIKE_PRICE",
-        "optiontype": "SEM_OPTION_TYPE",
-        "instrumenttype": "SEM_EXCH_INSTRUMENT_TYPE",
-        "symbolname": "SM_SYMBOL_NAME",
-        "customsymbol": "SEM_CUSTOM_SYMBOL",
-    }
-    for k in sample_row.keys():
-        nk = k.lower().replace(" ", "").replace("_", "")
-        m[nk] = k
-    return m
-
-
-def _get_field(r: Dict, m: Dict[str, str], keys: List[str]) -> str:
-    for k in keys:
-        if k in m:
-            v = r.get(m[k], "")
-            if v:
-                return v
-    return ""
-
-
-def _is_fno_segment(exch_val: str, seg_val: str) -> bool:
-    """Check if this is an F&O segment using both exchange and segment fields."""
-    u_exch = (exch_val or "").upper()
-    u_seg = (seg_val or "").upper()
-    
-    # Check segment first
-    if u_seg in {"FO", "F", "NFO", "NSE FO", "NSEFO", "D"}:
-        return True
-    
-    # Then check exchange
-    if u_exch == "NSE" and u_seg in {"F", "D", "FO"}:
-        return True
-    
-    # Also check BSE derivatives
-    if u_exch == "BSE" and u_seg in {"D"}:
-        return True
-        
-    return False
-
-
-def _is_optidx(instr_val: str, opt_type: str) -> bool:
-    """Check if this is an index option using instrument type and option type."""
-    u_instr = (instr_val or "").upper()
-    u_opt = (opt_type or "").upper()
-    
-    # First check option type
-    if u_opt in {"CE", "PE", "C", "P"}:
-        # Then check if it's an index option
-        return (
-            u_instr in {"OPTIDX", "INDEX OPTION", "INDEX OPTIONS"} or
-            "IDX" in u_instr or
-            "INDEX" in u_instr
-        )
-    return False
-
-def nearest_expiry(master: List[Dict], idx: str, today: date) -> Optional[str]:
-    out = []
-    for r in master[:500000]:
-        m = normalize_header_map(r)
-        exch = _get_field(r, m, ["exchangesegment", "exchange", "exchgsegment"]) 
-        seg = _get_field(r, m, ["segment"]) 
-        instr = _get_field(r, m, ["instrument", "instrumenttype", "instrumentname"]) 
-        sym = _get_field(r, m, ["symbolname", "tradingsymbol", "symbol"]) 
-        exp = _get_field(r, m, ["expirydate", "expiry", "expdate"]) 
-        opt = _get_field(r, m, ["optiontype", "opttype", "option"]) 
-        if not _is_fno_segment(exch, seg):
-            continue
-        uinstr = (instr or "").upper()
-        if not ("OPT" in uinstr and ("IDX" in uinstr or "INDEX" in uinstr)):
-            continue
-        flags = _is_symbol_for_index(sym)
-        if not flags.get(idx, False):
-            continue
-        try:
-            d = datetime.strptime(exp[:10], "%Y-%m-%d").date()
-        except Exception:
-            try:
-                d = datetime.strptime(exp[:11].strip(), "%d-%b-%Y").date()
-            except Exception:
-                continue
-        if d >= today:
-            out.append(d.isoformat())
-    return min(out) if out else None
-
-
-def find_option_contracts(master: List[Dict], idx: str, expiry: Optional[str], strikes: List[int]) -> List[Contract]:
-    result: Dict[Tuple[int, str], Contract] = {}
-    for r in master:
-        m = normalize_header_map(r)
-        exch = _get_field(r, m, ["exchangesgment", "exchangesegment", "exchange", "exchgsegment"]) 
-        seg = _get_field(r, m, ["segment"]) 
-        instr = _get_field(r, m, ["instrument", "instrumenttype", "instrumentname"]) 
-        sym = _get_field(r, m, ["symbolname", "tradingsymbol", "symbol"]) 
-        secid = _get_field(r, m, ["securityid", "security_id", "token"]) 
-        opttype = _get_field(r, m, ["optiontype", "opttype", "option"]) 
-        strike_val = _get_field(r, m, ["strikeprice", "strike", "strike_price"]) 
-        exp = _get_field(r, m, ["expirydate", "expiry", "expdate"]) 
-        if not _is_fno_segment(exch, seg):
-            continue
-        uinstr = (instr or "").upper()
-        if not ("OPT" in uinstr and ("IDX" in uinstr or "INDEX" in uinstr)):
-            continue
-        if not secid or not strike_val or not opttype:
-            continue
-        flags = _is_symbol_for_index(sym)
-        if not flags.get(idx, False):
-            continue
-        if expiry and exp[:10] != expiry:
-            try:
-                d = datetime.strptime(exp[:11].strip(), "%d-%b-%Y").date().isoformat()
-                if d != expiry:
-                    continue
-            except Exception:
-                continue
-        try:
-            st = int(round(float(strike_val)))
-        except Exception:
-            continue
-        if st not in strikes:
-            continue
-        cp = (opttype or "").upper()
-        if cp in ("C", "CALL"):
-            cp = "CE"
-        elif cp in ("P", "PUT"):
-            cp = "PE"
-        if cp not in ("CE", "PE"):
-            continue
-        key = (st, cp)
-        if key not in result:
-            result[key] = Contract(sec_id=str(secid), index=idx, strike=st, option_type=cp, expiry=expiry or exp[:10])
-    return list(result.values())
 
 
 class OptionsChainService:
@@ -274,72 +119,150 @@ class OptionsChainService:
             await self.ws.send(_json(msg))
             await asyncio.sleep(0.05)
 
-    async def _subscribe_underlying(self):
-        sec = INDEX_UNDERLYING[self.index]["security_id"]
-        await self._subscribe([{"ExchangeSegment": "NSE_FNO", "SecurityId": sec}], SUBSCRIBE_TICKER)
+    async def _build_snapshot_from_chain(self, oc_dict: dict, spot_ltp: float, min_strike: int, max_strike: int):
+        """Build and send snapshot from option chain data"""
+        try:
+            rows = []
+            
+            # Iterate through strikes
+            for strike_str, strike_data in oc_dict.items():
+                try:
+                    strike = int(float(strike_str))
+                    
+                    # Filter by strike range
+                    if strike < min_strike or strike > max_strike:
+                        continue
+                    
+                    ce_data = strike_data.get("ce", {})
+                    pe_data = strike_data.get("pe", {})
+                    
+                    # Build row data
+                    row = {
+                        "strike": strike,
+                        "ce": {
+                            "ltp": ce_data.get("ltp", 0),
+                            "chg": ce_data.get("chg", 0),
+                            "chg_pct": ce_data.get("chg_pct", 0),
+                            "oi": ce_data.get("oi", 0),
+                            "oi_chg": ce_data.get("oi_chg", 0),
+                            "vol": ce_data.get("volume", 0),
+                        },
+                        "pe": {
+                            "ltp": pe_data.get("ltp", 0),
+                            "chg": pe_data.get("chg", 0),
+                            "chg_pct": pe_data.get("chg_pct", 0),
+                            "oi": pe_data.get("oi", 0),
+                            "oi_chg": pe_data.get("oi_chg", 0),
+                            "vol": pe_data.get("volume", 0),
+                        }
+                    }
+                    rows.append(row)
+                    
+                except (ValueError, KeyError) as e:
+                    continue
+            
+            # Sort by strike
+            rows.sort(key=lambda x: x["strike"])
+            
+            # Build and send snapshot
+            snapshot = {
+                "type": "snapshot",
+                "index": self.index,
+                "expiry": self.selected_expiry,
+                "spot": spot_ltp,
+                "ts": datetime.now().isoformat(),
+                "rows": rows
+            }
+            
+            if self.send_callback:
+                await self.send_callback(snapshot)
+                logger.info(f"📤 Sent snapshot: {len(rows)} strikes, spot={spot_ltp:.2f}")
+            
+        except Exception as e:
+            logger.error(f"❌ Error building snapshot: {e}", exc_info=True)
 
     async def _build_and_subscribe_chain(self):
-        today = date.today()
-        
-        if not self.is_connected:
-            if not await self.connect():
-                print("❌ Failed to connect to WebSocket")
-                return
-
+        """Fetch option chain from DHAN API - poll every 3 seconds for updates"""
         try:
-            # Initialize Dhan client
-            dhan = dhanhq(self.client_id, self.access_token)
+            # Initialize Dhan REST API client
+            dhan = dhanhq(settings.DHAN_MASTER_CLIENT_ID, settings.DHAN_MASTER_ACCESS_TOKEN)
             
-            for idx in ("NIFTY", "BANKNIFTY"):
-                # Get expiry
-                expiry_date = today + timedelta(days=(3 - today.weekday() + 7))
-                exp = expiry_date.isoformat()
-                self.expiries[idx] = exp
-                
-                if idx not in self.snapshots:
-                    self.snapshots[idx] = {}
-                
-                # Get spot price
-                spot = await self._get_spot(idx)
-                
-                # Get option chain from Dhan API
-                chain = dhan.option_chain(
-                    under_security_id=INDEX_UNDERLYING[idx]["security_id"],
-                    under_exchange_segment=INDEX_UNDERLYING[idx]["exchange_segment"],
-                    expiry=exp
-                )
-                
-                if not chain or "data" not in chain:
-                    print(f"❌ Failed to get {idx} option chain: {chain}")
-                    continue
-                    
-                # Parse contracts
-                for opt in chain["data"]:
-                    try:
-                        contract = Contract(
-                            sec_id=str(opt["security_id"]),
-                            index=idx,
-                            strike=float(opt["strike_price"]),
-                            option_type=opt["option_type"],
-                            expiry=exp
-                        )
-                        self.contracts[contract.sec_id] = contract
-                    except (KeyError, ValueError) as e:
-                        print(f"⚠️ Error parsing option: {e}")
-                        continue
+            logger.info(f"📊 Fetching option chain for {self.index}...")
             
-            # Subscribe to all contracts
-            inst = []
-            for c in self.contracts.values():
-                inst.append({"ExchangeSegment": "NSE_FNO", "SecurityId": c.sec_id})
-            for idx in self.indices:
-                inst.append({"ExchangeSegment": "NSE_FNO", "SecurityId": INDEX_UNDERLYING[idx]["security_id"]})
+            # Get expiry list
+            expiry_response = dhan.expiry_list(
+                under_security_id=INDEX_UNDERLYING[self.index]["security_id"],
+                under_exchange_segment=INDEX_UNDERLYING[self.index]["exchange_segment"]
+            )
             
-            if not await self.subscribe(inst, SUBSCRIBE_QUOTE):
+            logger.info(f"📋 Expiry list response: {expiry_response}")
+            
+            if not expiry_response or expiry_response.get("status") != "success":
+                logger.error(f"❌ Failed to get expiry list: {expiry_response}")
                 return
-                
+            
+            # Get nearest expiry (first in list)
+            # The response structure is: {"data": {"data": ["2025-11-25", ...], "status": "success"}, "status": "success"}
+            expiry_dates = expiry_response.get("data", {})
+            
+            # Handle nested structure: data.data
+            if isinstance(expiry_dates, dict):
+                expiry_dates = expiry_dates.get("data", [])
+            
+            if not expiry_dates or not isinstance(expiry_dates, list):
+                logger.error(f"❌ No expiry dates available. Full response: {expiry_response}")
+                return
+            
+            self.selected_expiry = expiry_dates[0]  # Use nearest expiry
+            logger.info(f"📅 Using expiry: {self.selected_expiry}")
+            
+            # Start polling loop - fetch option chain every 3 seconds
+            logger.info("� Starting option chain polling (every 3 seconds)...")
+            while self.running:
+                try:
+                    # Fetch fresh option chain data
+                    chain_response = dhan.option_chain(
+                        under_security_id=INDEX_UNDERLYING[self.index]["security_id"],
+                        under_exchange_segment=INDEX_UNDERLYING[self.index]["exchange_segment"],
+                        expiry=self.selected_expiry
+                    )
+                    
+                    if not chain_response or chain_response.get("status") != "success":
+                        logger.error(f"❌ Failed to get option chain: {chain_response}")
+                        await asyncio.sleep(3)
+                        continue
+                    
+                    # Parse option chain data
+                    chain_data = chain_response.get("data", {})
+                    if "data" in chain_data and isinstance(chain_data["data"], dict):
+                        chain_data = chain_data["data"]
+                    
+                    spot_ltp = chain_data.get("last_price", 0)
+                    oc_dict = chain_data.get("oc", {})
+                    
+                    if not oc_dict:
+                        logger.error(f"❌ No option chain data in response")
+                        await asyncio.sleep(3)
+                        continue
+                    
+                    # Calculate strike range
+                    step = INDEX_UNDERLYING[self.index]["step"]
+                    atm_strike = round(spot_ltp / step) * step if spot_ltp > 0 else 0
+                    min_strike = atm_strike - (self.strikes_each_side * step)
+                    max_strike = atm_strike + (self.strikes_each_side * step)
+                    
+                    # Build snapshot
+                    await self._build_snapshot_from_chain(oc_dict, spot_ltp, min_strike, max_strike)
+                    
+                    # Wait 3 seconds before next fetch (DHAN API limit)
+                    await asyncio.sleep(3)
+                    
+                except Exception as e:
+                    logger.error(f"❌ Error in polling loop: {e}", exc_info=True)
+                    await asyncio.sleep(3)
+            
         except Exception as e:
-            print(f"❌ Error building option chain: {e}")
+            logger.error(f"❌ Error building option chain: {e}", exc_info=True)
 
     async def _listen(self):
         try:

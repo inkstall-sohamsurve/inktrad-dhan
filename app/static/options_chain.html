@@ -129,7 +129,7 @@
     const startBtn = document.getElementById('startBtn');
     const stopBtn = document.getElementById('stopBtn');
 
-    let intervalId = null;
+    let ws = null;
     let currentIdx = 'NIFTY';
     let stepMap = { NIFTY: 50, BANKNIFTY: 100 };
 
@@ -143,132 +143,163 @@
       if (val < -0.0001) return 'neg';
       return '';
     }
+    
     function formatSigned(n) {
-      const s = Math.abs(n).toLocaleString('en-IN');
+      const s = Math.abs(n).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
       if (n > 0) return '+' + s;
       if (n < 0) return '-' + s;
-      return '0';
+      return '0.00';
     }
 
-    async function fetchOptionsChain() {
-      try {
-        const response = await fetch(`/api/v2/options-chain/live?index=${currentIdx}`);
-        const result = await response.json();
-        
-        if (result.status === 'success' && result.data) {
-          renderOptionsChain(result.data);
-          statUpdated.textContent = new Date(result.timestamp).toLocaleTimeString();
-        } else if (result.status === 'error') {
-          // Show user-friendly error message
-          const errorMsg = result.message || 'Failed to load data';
-          console.warn('API returned error:', errorMsg);
-          chainBody.innerHTML = `<tr><td colspan="11" style="text-align: center; color: #b08800; padding: 20px;">
-            ⚠️ ${errorMsg}<br/><br/>
-            <small style="color: #64748b;">This usually happens when:<br/>
-            • Market is closed (trading hours: 9:15 AM - 3:30 PM IST)<br/>
-            • Invalid expiry date<br/>
-            • DHAN API credentials are incorrect</small>
-          </td></tr>`;
-          statUpdated.textContent = new Date(result.timestamp).toLocaleTimeString();
-        } else {
-          console.error('Unexpected API response:', result);
-          chainBody.innerHTML = '<tr><td colspan="11" style="text-align: center; color: red;">Unexpected response format. Check console.</td></tr>';
-        }
-      } catch (error) {
-        console.error('Fetch error:', error);
-        chainBody.innerHTML = '<tr><td colspan="11" style="text-align: center; color: red;">Network error. Check connection and ensure backend is running.</td></tr>';
-      }
-    }
-
-    function renderOptionsChain(data) {
-      // The API returns data in the format from live_options_chain.py
-      // We need to extract strikes and create rows similar to the WebSocket format
-      
-      statIndex.textContent = currentIdx;
-      statSpot.textContent = '-'; // Spot price not directly available in this format
-      statExpiry.textContent = 'Auto'; // Expiry not directly available
-      
-      // Parse the data structure
-      if (!data || typeof data !== 'object') {
+    function renderOptionsChain(snapshot) {
+      if (!snapshot || !snapshot.rows || snapshot.rows.length === 0) {
         chainBody.innerHTML = '<tr><td colspan="11" style="text-align: center;">No data available</td></tr>';
         return;
       }
       
-      // Extract strikes from the data
-      const strikes = Object.keys(data).filter(key => key !== 'status').sort((a, b) => parseFloat(a) - parseFloat(b));
+      // Update stats
+      statIndex.textContent = snapshot.index || currentIdx;
+      statSpot.textContent = snapshot.spot ? snapshot.spot.toFixed(2) : '-';
+      statExpiry.textContent = snapshot.expiry || '-';
+      statUpdated.textContent = new Date(snapshot.ts).toLocaleTimeString();
       
-      if (strikes.length === 0) {
-        chainBody.innerHTML = '<tr><td colspan="11" style="text-align: center;">No strike data available</td></tr>';
-        return;
-      }
+      const step = stepMap[snapshot.index] || 50;
+      const atmStrike = snapshot.spot ? Math.round(snapshot.spot / step) * step : null;
       
-      const step = stepMap[currentIdx] || 50;
-      const atmStrike = null; // We don't have spot price to calculate ATM
+      // Find max OI for highlighting
+      let maxCeOi = 0, maxPeOi = 0;
+      snapshot.rows.forEach(r => {
+        if (r.ce.oi > maxCeOi) maxCeOi = r.ce.oi;
+        if (r.pe.oi > maxPeOi) maxPeOi = r.pe.oi;
+      });
       
       chainBody.innerHTML = '';
       
-      strikes.forEach(strikeKey => {
-        const strikeData = data[strikeKey];
-        if (!strikeData || !strikeData.ce || !strikeData.pe) return;
-        
-        const strike = parseFloat(strikeKey);
-        const ce = strikeData.ce;
-        const pe = strikeData.pe;
+      snapshot.rows.forEach(row => {
+        const strike = row.strike;
+        const ce = row.ce;
+        const pe = row.pe;
         
         const tr = document.createElement('tr');
         if (atmStrike !== null && strike === atmStrike) tr.classList.add('atm');
         
-        const ceChgCls = classForChange(ce.last_price || 0);
-        const peChgCls = classForChange(pe.last_price || 0);
+        const ceChgCls = classForChange(ce.chg);
+        const peChgCls = classForChange(pe.chg);
+        
+        const ceOiCls = (maxCeOi > 0 && ce.oi === maxCeOi) ? 'maxoi' : '';
+        const peOiCls = (maxPeOi > 0 && pe.oi === maxPeOi) ? 'maxoi' : '';
         
         tr.innerHTML = `
-          <td>${formatNum(ce.oi || 0)}</td>
-          <td class="muted">-</td>
-          <td>${formatNum(ce.volume || 0)}</td>
-          <td>${(ce.last_price || 0).toFixed(2)}</td>
-          <td class="${ceChgCls}">0.00</td>
+          <td class="${ceOiCls}">${formatNum(ce.oi)}</td>
+          <td class="${classForChange(ce.oi_chg)}">${formatSigned(ce.oi_chg)}</td>
+          <td>${formatNum(ce.vol)}</td>
+          <td>${ce.ltp.toFixed(2)}</td>
+          <td class="${ceChgCls}">${formatSigned(ce.chg)} (${ce.chg_pct.toFixed(2)}%)</td>
           <td class="strike">${strike.toLocaleString()}</td>
-          <td class="${peChgCls}">0.00</td>
-          <td>${(pe.last_price || 0).toFixed(2)}</td>
-          <td>${formatNum(pe.volume || 0)}</td>
-          <td class="muted">-</td>
-          <td>${formatNum(pe.oi || 0)}</td>
+          <td class="${peChgCls}">${formatSigned(pe.chg)} (${pe.chg_pct.toFixed(2)}%)</td>
+          <td>${pe.ltp.toFixed(2)}</td>
+          <td>${formatNum(pe.vol)}</td>
+          <td class="${classForChange(pe.oi_chg)}">${formatSigned(pe.oi_chg)}</td>
+          <td class="${peOiCls}">${formatNum(pe.oi)}</td>
         `;
         chainBody.appendChild(tr);
       });
     }
 
-    function startFetching() {
+    function connectWebSocket() {
       const idx = (indexSel.value || 'NIFTY').toUpperCase();
+      const strikes = parseInt(strikesInp.value) || 10;
       currentIdx = idx;
       
-      stopFetching(); // Stop any existing fetching
+      // Close existing connection
+      if (ws) {
+        ws.close();
+        ws = null;
+      }
       
-      // Start fetching immediately
-      fetchOptionsChain();
+      // Show connecting status
+      chainBody.innerHTML = '<tr><td colspan="11" style="text-align: center; padding: 20px;">🔄 Connecting to WebSocket...</td></tr>';
       
-      // Set up interval to fetch every 5 seconds
-      intervalId = setInterval(fetchOptionsChain, 5000);
+      // Create WebSocket connection
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${protocol}//${window.location.host}/api/v2/ws/options-chain`;
+      
+      console.log('Connecting to:', wsUrl);
+      ws = new WebSocket(wsUrl);
+      
+      ws.onopen = () => {
+        console.log('✅ WebSocket connected');
+        // Send initial config
+        ws.send(JSON.stringify({
+          action: 'start',
+          index: idx,
+          strikesEachSide: strikes
+        }));
+        chainBody.innerHTML = '<tr><td colspan="11" style="text-align: center; padding: 20px;">⏳ Loading option chain data...</td></tr>';
+      };
+      
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          console.log('Received:', data.type);
+          
+          if (data.type === 'connection') {
+            console.log('✅ Connection established:', data.message);
+          } else if (data.type === 'snapshot') {
+            renderOptionsChain(data);
+          } else if (data.type === 'error') {
+            console.error('❌ Error:', data.message);
+            chainBody.innerHTML = `<tr><td colspan="11" style="text-align: center; color: #b08800; padding: 20px;">
+              ⚠️ ${data.message}<br/><br/>
+              <small style="color: #64748b;">This usually happens when:<br/>
+              • Market is closed (trading hours: 9:15 AM - 3:30 PM IST)<br/>
+              • DHAN API credentials are incorrect<br/>
+              • Network connectivity issues</small>
+            </td></tr>`;
+          } else if (data.type === 'ping') {
+            // Respond to ping
+            ws.send(JSON.stringify({ action: 'ping' }));
+          }
+        } catch (error) {
+          console.error('Error parsing message:', error);
+        }
+      };
+      
+      ws.onerror = (error) => {
+        console.error('❌ WebSocket error:', error);
+        chainBody.innerHTML = '<tr><td colspan="11" style="text-align: center; color: red; padding: 20px;">WebSocket error. Check console and ensure backend is running.</td></tr>';
+      };
+      
+      ws.onclose = () => {
+        console.log('📴 WebSocket closed');
+        if (startBtn.disabled) {
+          chainBody.innerHTML = '<tr><td colspan="11" style="text-align: center; color: #b08800; padding: 20px;">Connection closed. Click Start to reconnect.</td></tr>';
+        }
+        startBtn.disabled = false;
+        stopBtn.disabled = true;
+      };
       
       startBtn.disabled = true;
       stopBtn.disabled = false;
     }
 
-    function stopFetching() {
-      if (intervalId) {
-        clearInterval(intervalId);
-        intervalId = null;
+    function disconnectWebSocket() {
+      if (ws) {
+        ws.send(JSON.stringify({ action: 'stop' }));
+        ws.close();
+        ws = null;
       }
       startBtn.disabled = false;
       stopBtn.disabled = true;
+      chainBody.innerHTML = '<tr><td colspan="11" style="text-align: center;">Stopped. Click Start to begin.</td></tr>';
     }
 
-    startBtn.addEventListener('click', startFetching);
-    stopBtn.addEventListener('click', stopFetching);
+    startBtn.addEventListener('click', connectWebSocket);
+    stopBtn.addEventListener('click', disconnectWebSocket);
 
     // Auto-start on load
     window.addEventListener('load', () => {
-      startFetching();
+      connectWebSocket();
     });
   </script>
 </body>

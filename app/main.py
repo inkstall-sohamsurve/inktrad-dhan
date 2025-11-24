@@ -17,6 +17,7 @@ from app.db.database import Database
 from app.api.v1 import auth_router, dhan_router, watchlist_router, live_feed_router, trade_router, backtest_router
 from app.services.websocket_manager import connection_manager, dhan_ws_manager
 from app.services.options_chain_service import OptionsChainService
+from app.services.mcx_options_chain_service import MCXOptionsChainService
 from app.services.model_service import ModelService
 from app.services.trade_service import TradeService
 
@@ -80,11 +81,13 @@ async def lifespan(app: FastAPI):
     logger.info(f"  Features:   http://{settings.HOST}:{settings.PORT}/api/v2/features")
     logger.info("")
     logger.info("🔗 Quick Access:")
-    logger.info(f"  Live Feed:     http://{settings.HOST}:{settings.PORT}/live-feed")
-    logger.info(f"  Historical:    http://{settings.HOST}:{settings.PORT}/test-historical")
-    logger.info(f"  Health:        http://{settings.HOST}:{settings.PORT}/health")
+    logger.info(f"  Live Feed:          http://{settings.HOST}:{settings.PORT}/live-feed")
+    logger.info(f"  Options Chain:      http://{settings.HOST}:{settings.PORT}/options-chain")
+    logger.info(f"  Commodity Options:  http://{settings.HOST}:{settings.PORT}/commodity-options")
+    logger.info(f"  Historical:         http://{settings.HOST}:{settings.PORT}/test-historical")
+    logger.info(f"  Health:             http://{settings.HOST}:{settings.PORT}/health")
     logger.info("")
-    logger.info("💡 Tip: Open http://localhost:8000/live-feed for real-time NIFTY 50 data!")
+    logger.info("💡 Tip: Open http://localhost:8000/commodity-options for live commodity options data!")
     logger.info("")
     logger.info("=" * 80)
     
@@ -179,6 +182,14 @@ async def options_chain_page():
     if html_path.exists():
         return FileResponse(html_path)
     return {"error": "Options chain page not found"}
+
+@app.get("/commodity-options", tags=["Testing"])
+async def commodity_options_page():
+    """Serve the commodity options chain test page."""
+    html_path = Path(__file__).parent / "static" / "commodity_options.html"
+    if html_path.exists():
+        return FileResponse(html_path)
+    return {"error": "Commodity options page not found"}
 
 
 @app.get("/auto-trade", tags=["Testing"])
@@ -363,58 +374,265 @@ async def get_live_options_chain(index: str = "NIFTY", expiry: str = None):
 
 @app.websocket("/api/v2/ws/options-chain")
 async def websocket_options_chain(websocket: WebSocket):
-    """WebSocket endpoint for live options chain snapshots."""
+    """
+    WebSocket endpoint for live options chain data.
+    
+    Provides continuous real-time updates for option chain data including:
+    - Live option prices (LTP, bid/ask)
+    - Open Interest (OI) and OI changes
+    - Volume
+    - Greeks (if available)
+    - Underlying spot price
+    
+    Client should send initial config:
+    {
+        "action": "start",
+        "index": "NIFTY" or "BANKNIFTY",
+        "strikesEachSide": 10  (number of strikes on each side of ATM)
+    }
+    """
     service: OptionsChainService | None = None
     try:
         await connection_manager.connect(websocket)
+        logger.info("📡 New options chain WebSocket client connected")
+        
         # Expect an initial config message
-        cfg = None
         try:
             raw = await asyncio.wait_for(websocket.receive_text(), timeout=15.0)
             import json
             msg = json.loads(raw)
+            
             if isinstance(msg, dict) and msg.get("action") in ("start", "subscribe"):
                 index = (msg.get("index") or "NIFTY").upper()
                 if index not in ("NIFTY", "BANKNIFTY"):
+                    logger.warning(f"⚠️ Invalid index {index}, defaulting to NIFTY")
                     index = "NIFTY"
+                
                 strikes = int(msg.get("strikesEachSide") or 10)
+                logger.info(f"📊 Starting options chain for {index}, strikes: ±{strikes}")
+                
                 async def send_cb(payload):
-                    # Send only if still connected
+                    """Send data to client if still connected"""
                     if websocket.client_state == WebSocketState.CONNECTED:
                         await websocket.send_json(payload)
-                service = OptionsChainService(index=index, strikes_each_side=strikes, send_callback=send_cb)
+                
+                # Initialize and start the service
+                service = OptionsChainService(
+                    index=index,
+                    strikes_each_side=strikes,
+                    send_callback=send_cb
+                )
+                
                 await service.start()
-                await websocket.send_json({"type": "connection", "status": "started", "index": index, "strikesEachSide": strikes})
+                
+                await websocket.send_json({
+                    "type": "connection",
+                    "status": "started",
+                    "index": index,
+                    "strikesEachSide": strikes,
+                    "message": f"Live options chain started for {index}"
+                })
+                logger.info(f"✅ Options chain service started for {index}")
             else:
-                await websocket.send_json({"type": "error", "message": "Send {action:'start', index:'NIFTY|BANKNIFTY', strikesEachSide:10}"})
+                await websocket.send_json({
+                    "type": "error",
+                    "message": "Invalid message. Send {action:'start', index:'NIFTY|BANKNIFTY', strikesEachSide:10}"
+                })
+                return
+                
         except asyncio.TimeoutError:
-            await websocket.send_json({"type": "error", "message": "No config received. Send {action:'start', ...}"})
-        # Keep the connection alive and process simple control messages
+            await websocket.send_json({
+                "type": "error",
+                "message": "No config received within 15 seconds. Send {action:'start', index:'NIFTY|BANKNIFTY', strikesEachSide:10}"
+            })
+            return
+        except json.JSONDecodeError:
+            await websocket.send_json({
+                "type": "error",
+                "message": "Invalid JSON message"
+            })
+            return
+        
+        # Keep the connection alive and process control messages
         while True:
             try:
                 raw = await asyncio.wait_for(websocket.receive_text(), timeout=30.0)
                 import json
                 msg = json.loads(raw)
+                
                 if msg.get("action") == "stop":
+                    logger.info("🛑 Client requested stop")
                     break
+                    
                 if msg.get("action") == "ping":
                     await websocket.send_json({"type": "pong", "ts": datetime.now().isoformat()})
+                    
             except asyncio.TimeoutError:
-                # periodic keep-alive
+                # Send periodic keep-alive ping
                 if websocket.client_state != WebSocketState.CONNECTED:
                     break
                 await websocket.send_json({"type": "ping"})
+                
             except WebSocketDisconnect:
+                logger.info("📴 Client disconnected")
                 break
+                
+            except json.JSONDecodeError:
+                pass  # Ignore invalid JSON
+                
     except Exception as e:
-        logger.error(f"Options chain WS error: {e}")
+        logger.error(f"❌ Options chain WebSocket error: {e}", exc_info=True)
+        try:
+            await websocket.send_json({
+                "type": "error",
+                "message": f"Server error: {str(e)}"
+            })
+        except:
+            pass
     finally:
+        # Cleanup
         try:
             if service:
+                logger.info("🧹 Stopping options chain service...")
                 await service.stop()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"Error stopping service: {e}")
+        
         connection_manager.disconnect(websocket)
+        logger.info("✅ Options chain WebSocket connection closed")
+
+
+@app.websocket("/api/v2/ws/commodity-options")
+async def websocket_commodity_options(websocket: WebSocket):
+    """
+    WebSocket endpoint for live commodity options chain data (MCX).
+    
+    Provides continuous real-time updates for commodity option chain data including:
+    - Live option prices (LTP, bid/ask)
+    - Open Interest (OI) and OI changes
+    - Volume
+    - Greeks (Delta, Gamma, Theta, Vega)
+    - Implied Volatility (IV)
+    - Underlying commodity spot price
+    
+    Client should send initial config:
+    {
+        "action": "start",
+        "commodity": "CRUDEOIL" | "GOLD" | "SILVER" | "NATURALGAS" | "COPPER" | "ZINC",
+        "strikesEachSide": 10  (number of strikes on each side of ATM)
+    }
+    """
+    service: MCXOptionsChainService | None = None
+    try:
+        await connection_manager.connect(websocket)
+        logger.info("📡 New commodity options WebSocket client connected")
+        
+        # Expect an initial config message
+        try:
+            raw = await asyncio.wait_for(websocket.receive_text(), timeout=15.0)
+            import json
+            msg = json.loads(raw)
+            
+            if isinstance(msg, dict) and msg.get("action") in ("start", "subscribe"):
+                commodity = (msg.get("commodity") or "CRUDEOIL").upper()
+                supported_commodities = ["CRUDEOIL", "GOLD", "SILVER", "NATURALGAS", "COPPER", "ZINC"]
+                
+                if commodity not in supported_commodities:
+                    logger.warning(f"⚠️ Invalid commodity {commodity}, defaulting to CRUDEOIL")
+                    commodity = "CRUDEOIL"
+                
+                strikes = int(msg.get("strikesEachSide") or 10)
+                logger.info(f"🏭 Starting commodity options chain for {commodity}, strikes: ±{strikes}")
+                
+                async def send_cb(payload):
+                    """Send data to client if still connected"""
+                    if websocket.client_state == WebSocketState.CONNECTED:
+                        await websocket.send_json(payload)
+                
+                # Initialize and start the MCX options chain service (WebSocket-based)
+                service = MCXOptionsChainService(
+                    commodity=commodity,
+                    strikes_each_side=strikes,
+                    send_callback=send_cb,
+                )
+                await service.start()
+                
+                await websocket.send_json({
+                    "type": "connection",
+                    "status": "started",
+                    "commodity": commodity,
+                    "strikesEachSide": strikes,
+                    "message": f"Commodity options chain service started for {commodity}"
+                })
+                logger.info(f"✅ Commodity options service started for {commodity}")
+                
+            else:
+                await websocket.send_json({
+                    "type": "error",
+                    "message": "Send {action:'start', commodity:'CRUDEOIL|GOLD|SILVER|NATURALGAS|COPPER|ZINC', strikesEachSide:10}"
+                })
+                return
+                
+        except asyncio.TimeoutError:
+            await websocket.send_json({
+                "type": "error",
+                "message": "No config received. Send {action:'start', commodity:'CRUDEOIL', strikesEachSide:10}"
+            })
+            return
+        except json.JSONDecodeError:
+            await websocket.send_json({
+                "type": "error",
+                "message": "Invalid JSON message"
+            })
+            return
+        
+        # Keep the connection alive and process control messages
+        while True:
+            try:
+                raw = await asyncio.wait_for(websocket.receive_text(), timeout=30.0)
+                import json
+                msg = json.loads(raw)
+                
+                if msg.get("action") == "stop":
+                    logger.info("🛑 Client requested stop")
+                    break
+                    
+                if msg.get("action") == "ping":
+                    await websocket.send_json({"type": "pong", "ts": datetime.now().isoformat()})
+                    
+            except asyncio.TimeoutError:
+                # Send periodic keep-alive ping
+                if websocket.client_state != WebSocketState.CONNECTED:
+                    break
+                await websocket.send_json({"type": "ping"})
+                
+            except WebSocketDisconnect:
+                logger.info("📴 Client disconnected")
+                break
+                
+            except json.JSONDecodeError:
+                pass  # Ignore invalid JSON
+                
+    except Exception as e:
+        logger.error(f"❌ Commodity options WebSocket error: {e}", exc_info=True)
+        try:
+            await websocket.send_json({
+                "type": "error",
+                "message": f"Server error: {str(e)}"
+            })
+        except:
+            pass
+    finally:
+        # Cleanup
+        try:
+            if service:
+                logger.info("🧹 Stopping commodity options service...")
+                await service.stop()
+        except Exception as e:
+            logger.error(f"Error stopping service: {e}")
+        
+        connection_manager.disconnect(websocket)
+        logger.info("✅ Commodity options WebSocket connection closed")
 
 
 @app.exception_handler(Exception)
